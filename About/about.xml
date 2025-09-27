@@ -1,0 +1,74 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<ModMetadata xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <Name>Beef's Room Defogger</Name>
+    <Author>TheRealBeef</Author>
+    <Version>1.0.0</Version>
+
+    <Description>
+        [h1]Beef's Room Defogger[/h1]
+        [b]WARNING:[/b] This is a StationeersLaunchPad Plugin Mod. It requires BepInEx to be installed with the StationeersLaunchPad plugin.
+        See: https://github.com/StationeersLaunchPad/StationeersLaunchPad
+
+        Removes fog and atmospheric scattering in sealed, pressurized rooms while maintaining normal fog effects outdoors.
+
+        [b]Features:[/b]
+        - Fog outside but not inside
+        - Fog transitions based on room sealing and atmospheric composition
+        - Distinguishes between sealed rooms, venting rooms, and outdoor areas
+        - Configurable fog buffer distances and adjustment speeds
+
+        [b]Configuration:[/b]
+        - Indoor Fog Buffer: Additional buffer for to prevent fog from creeping in
+        - Adjustment Speed: How quickly fog changes adapt
+        - Extra Fog: Additional atmospheric scattering for outdoor areas
+
+        Improves visibility inside your base while maintaining the amazing outdoors effects.
+
+        Source Code: https://github.com/TheRealBeef/Beefs-Stationeers-Room-Defogger
+    </Description>
+
+    <ChangeLog>
+        1.0.0:
+        - Detect and adjust fog based on indoors or outdoors
+        - Determines if a room is sealed or venting
+        - Traverse and updates cache of nearby rooms to propogate effect
+        - Compares internal vs external atmo for interpolation in sealed but not cleaned up rooms
+        - Config options added
+    </ChangeLog>
+
+
+    <Tags>
+        <Tag>QoL</Tag>
+        <Tag>BepInEx</Tag>
+        <Tag>StationeersLaunchPad</Tag>
+    </Tags>
+
+    <Dependencies />
+
+    <LoadBefore />
+    <LoadAfter />
+    <InGameDescription>
+        <![CDATA[
+<size=30><color=#ffa500>Beef's Room Defogger</color></size>
+<b>WARNING:</b> <color=#ff0000>This is a StationeersLaunchPad Plugin Mod. It requires BepInEx to be installed.</color>
+See: https://github.com/StationeersLaunchPad/StationeersLaunchPad
+
+Removes fog and atmospheric scattering in sealed, pressurized rooms while maintaining normal fog effects outdoors.
+
+[b]Features:[/b]
+- Fog outside but not inside
+- Fog transitions based on room sealing and atmospheric composition
+- Distinguishes between sealed rooms, venting rooms, and outdoor areas
+- Configurable fog buffer distances and adjustment speeds
+
+[b]Configuration:[/b]
+- Indoor Fog Buffer: Additional buffer for to prevent fog from creeping in
+- Adjustment Speed: How quickly fog changes adapt
+- Extra Fog: Additional atmospheric scattering for outdoor areas
+
+Improves visibility inside your base while maintaining the amazing outdoors effects.
+
+Source Code: https://github.com/TheRealBeef/Beefs-Stationeers-Room-Defogger
+]]>
+    </InGameDescription>
+</ModMetadata>
