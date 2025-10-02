@@ -14,32 +14,18 @@ using StationeersModProfileLib;
 
 namespace BeefsRoomDefogger
 {
-    public class FogControlPatcher : MonoBehaviour
+    public static class BeefsRoomController
     {
-        private Room _lastPlayerRoom;
-        private float _originalFogStart;
-        private float _originalFogEnd;
-        private float _nextUpdateTime;
-        private bool _initialized = false;
-        private float _currentFogDistance = 0f;
-        private bool _isInSealedRoom = false;
-        private static float _lastCalculatedRoomDistance = -1f;
-        private static bool _lastPlayerInSealedRoom = false;
-        private static float _lastCalculationTime = 0f;
         private static bool _sealingCheckInProgress = false;
         private static double _worldTemperatureRange = 100.0;
-        private static float _lastFogReductionMultiplier = 0f;
 
-        private static readonly Dictionary<long, RoomSealingInfo> RoomSealingCache = new Dictionary<long, RoomSealingInfo>();
+        public static readonly Dictionary<long, RoomSealingInfo> RoomSealingCache = new Dictionary<long, RoomSealingInfo>();
         private static readonly Dictionary<Grid3, Atmosphere> TraversalAtmosphereCache = new Dictionary<Grid3, Atmosphere>();
         private static readonly Dictionary<Grid3, Room> TraversalRoomCache = new Dictionary<Grid3, Room>();
 
         private const int MaxTraversalDepth = 3; // How many room connections to check
         private const float CacheExpirySeconds = 600f; // 10min
         private const int MaxIterations = 50; //max loops for traverse
-        private const float HighSimilarityThreshold = 0.8f; // high thresh - above fog at max
-        private const float LowSimilarityThreshold = 0.3f; // low thresh for fog pushback
-        private const float UpdateFrequency = 1.0f; // .5s
 
         public enum RoomVentingState
         {
@@ -47,14 +33,14 @@ namespace BeefsRoomDefogger
             Venting
         }
 
-        private struct RoomSealingInfo
+        public struct RoomSealingInfo
         {
             public readonly RoomVentingState VentingState;
             public readonly float SimilarityRatio;
             public readonly float LastChecked;
-            public int TraversalDepth;
+            public readonly int TraversalDepth;
 
-            public RoomSealingInfo(RoomVentingState ventingState, float similarityRatio, float lastChecked, int depth = 1)
+            public RoomSealingInfo(RoomVentingState ventingState, float similarityRatio, float lastChecked, int depth)
             {
                 VentingState = ventingState;
                 SimilarityRatio = similarityRatio;
@@ -65,150 +51,13 @@ namespace BeefsRoomDefogger
             public bool IsStale => Time.time - LastChecked > CacheExpirySeconds;
         }
 
-        private void Start()
+        public static void Initialize()
         {
-            if (!BeefsRoomDefoggerPlugin.EnableRoomDefogger.Value)
-            {
-                BeefsRoomDefoggerPlugin.Log.LogInfo("Beefs Room Defogger is disabled");
-                enabled = false;
-                return;
-            }
-            _originalFogStart = RenderSettings.fogStartDistance;
-            _originalFogEnd = RenderSettings.fogEndDistance;
-            _initialized = true;
-            BeefsRoomDefoggerPlugin.Log.LogInfo($"Beefs Room Defogger loaded");
-            InvokeRepeating(nameof(CleanupCache), 30f, 30f);
+            _worldTemperatureRange = WorldTempRange();
+            BeefsRoomDefoggerPlugin.Log.LogInfo($"BeefsRoomController initialized with temp range: {_worldTemperatureRange:F1}K");
         }
 
-        private void Update()
-        {
-            // using var _ = ModProfiler.Profile();
-
-            if (!BeefsRoomDefoggerPlugin.EnableRoomDefogger.Value)
-            {
-                return;
-            }
-
-            // in game?
-            if (WorldManager.Instance?.WorldSun?.TargetLight == null)
-            {
-                if (_initialized)
-                {
-                    // back at main menu - reset
-                    RenderSettings.fogStartDistance = _originalFogStart;
-                    RenderSettings.fogEndDistance = _originalFogEnd;
-                    _initialized = false;
-                    _isInSealedRoom = false;
-                    _lastPlayerRoom = null;
-                    _currentFogDistance = 0f;
-                    _lastCalculatedRoomDistance = -1f;
-                    _lastPlayerInSealedRoom = false;
-                    _lastCalculationTime = 0f;
-                    RoomSealingCache.Clear();
-                    _sealingCheckInProgress = false;
-                    BeefsRoomDefoggerPlugin.Log.LogInfo("Reset");
-                }
-                return;
-            }
-
-            if (!_initialized)
-            {
-                _originalFogStart = RenderSettings.fogStartDistance;
-                _originalFogEnd = RenderSettings.fogEndDistance;
-                _worldTemperatureRange = WorldTempRange();
-                _initialized = true;
-                BeefsRoomDefoggerPlugin.Log.LogInfo($"Beefs Room Defogger initialized");
-                InvokeRepeating(nameof(CleanupCache), 30f, 30f);
-            }
-
-            if (Time.time < _nextUpdateTime)
-            {
-                return;
-            }
-
-            _nextUpdateTime = Time.time + UpdateFrequency;
-            var playerRoom = GetRoom();
-
-            // quick exit cuz outside
-            if (playerRoom == null)
-            {
-                if (_isInSealedRoom)
-                {
-                    RestoreFog("Player is outside (no room)");
-                    _isInSealedRoom = false;
-                    _lastPlayerRoom = null;
-                }
-                return;
-            }
-
-            if (!_sealingCheckInProgress)
-            {
-                StartCoroutine(CheckRoomStateCoroutine(playerRoom));
-            }
-
-            RoomVentingState ventingState = RoomVentingState.Sealed;
-            float similarityRatio = 0.0f;
-
-            if (RoomSealingCache.TryGetValue(playerRoom.RoomId, out var sealingInfo))
-            {
-                if (!sealingInfo.IsStale)
-                {
-                    // use cache
-                    ventingState = sealingInfo.VentingState;
-                    similarityRatio = sealingInfo.SimilarityRatio;
-                }
-                else
-                {
-                    // use cache but its stale
-                    ventingState = sealingInfo.VentingState;
-                    similarityRatio = sealingInfo.SimilarityRatio;
-                }
-            }
-            else
-            {
-                // no cache! sealed until otherwise proven
-                ventingState = RoomVentingState.Sealed;
-                similarityRatio = 0.0f;
-            }
-
-
-            if (ventingState == RoomVentingState.Venting)
-            {
-                // we're open to atmo
-                if (_isInSealedRoom)
-                {
-                    RestoreFog("Room group is venting");
-                }
-                _isInSealedRoom = false;
-                _lastPlayerRoom = null;
-            }
-            else
-            {
-                // we're in a room but maybe it's not yet gucci in here
-                float fogReductionMultiplier = CalculateFogMultiplier(similarityRatio);
-                _lastFogReductionMultiplier = fogReductionMultiplier;
-
-                if (!_isInSealedRoom || playerRoom != _lastPlayerRoom)
-                {
-                    BeefsRoomDefoggerPlugin.Log.LogInfo($"Room: {playerRoom?.RoomId}, Similarity: {similarityRatio:F2}, Multiplier: {fogReductionMultiplier:F2}");
-                }
-
-                _isInSealedRoom = true;
-                _lastPlayerRoom = playerRoom;
-                UpdateFogDistance(playerRoom, fogReductionMultiplier);
-            }
-        }
-
-        private void OnDestroy()
-        {
-            if (_initialized)
-            {
-                RenderSettings.fogStartDistance = _originalFogStart;
-                RenderSettings.fogEndDistance = _originalFogEnd;
-            }
-        }
-
-        private Room GetRoom()
+        public static Room GetRoom()
         {
             try
             {
@@ -229,11 +78,53 @@ namespace BeefsRoomDefogger
             }
         }
 
-        private IEnumerator CheckRoomStateCoroutine(Room room)
+        public static RoomSealingInfo? GetCachedRoomState(long roomId)
         {
-            // using var _ = ModProfiler.Profile();
+            if (RoomSealingCache.TryGetValue(roomId, out var info))
+                return info;
+            return null;
+        }
+
+        public static void ScheduleRoomCheck(Room room, MonoBehaviour caller)
+        {
+            if (room == null || _sealingCheckInProgress) return;
+            caller.StartCoroutine(CheckRoomStateCoroutine(room));
+        }
+
+        public static void CleanupCache()
+        {
+            var staleRooms = new List<long>();
+            foreach (var kvp in RoomSealingCache)
+            {
+                if (kvp.Value.IsStale)
+                {
+                    var room = RoomController.Get(kvp.Key);
+                    if (room == null)
+                    {
+                        staleRooms.Add(kvp.Key);
+                    }
+                }
+            }
+
+            foreach (var roomId in staleRooms)
+            {
+                RoomSealingCache.Remove(roomId);
+            }
+        }
+
+        public static void ClearCache()
+        {
+            RoomSealingCache.Clear();
+            TraversalAtmosphereCache.Clear();
+            TraversalRoomCache.Clear();
+            _sealingCheckInProgress = false;
+        }
+
+        private static IEnumerator CheckRoomStateCoroutine(Room room)
+        {
             if (_sealingCheckInProgress) yield break;
             _sealingCheckInProgress = true;
+
             Atmosphere roomAtmos = null;
 
             foreach (var grid in room.Grids)
@@ -249,17 +140,19 @@ namespace BeefsRoomDefogger
 
             if (roomAtmos != null)
             {
-                yield return StartCoroutine(IsAtmosphereGroupVentingCoroutine(roomAtmos, (state, similarity) => {
+                yield return IsAtmosphereGroupVentingCoroutine(roomAtmos, (state, similarity) => {
                     ventingState = state;
                     similarityRatio = similarity;
-                }));
+                });
             }
 
             RoomSealingCache[room.RoomId] = new RoomSealingInfo(ventingState, similarityRatio, Time.time, 1);
             _sealingCheckInProgress = false;
         }
 
-        private IEnumerator IsAtmosphereGroupVentingCoroutine(Atmosphere startAtmos, System.Action<RoomVentingState, float> callback)
+        private static IEnumerator IsAtmosphereGroupVentingCoroutine(
+            Atmosphere startAtmos,
+            System.Action<RoomVentingState, float> callback)
         {
             // ~0.09ms but is coroutine so is fine
             // using var _ = ModProfiler.Profile();
@@ -348,8 +241,28 @@ namespace BeefsRoomDefogger
             callback(ventingState, similarityRatio);
         }
 
+        private static Atmosphere GetCachedAtmosphere(Grid3 grid)
+        {
+            if (!TraversalAtmosphereCache.TryGetValue(grid, out var atmosphere))
+            {
+                atmosphere = AtmosphericsController.World.GetAtmosphereLocal(new WorldGrid(grid));
+                TraversalAtmosphereCache[grid] = atmosphere;
+            }
+            return atmosphere;
+        }
+
+        private static Room GetCachedRoom(Grid3 grid)
+        {
+            if (!TraversalRoomCache.TryGetValue(grid, out var room))
+            {
+                room = RoomController.World.GetRoom(grid);
+                TraversalRoomCache[grid] = room;
+            }
+            return room;
+        }
+
         // This is basically the base-game method but adjusted a bit to use temp and output a float
-        private float SimilarityToWorldAtmo(Atmosphere roomAtmos)
+        private static float SimilarityToWorldAtmo(Atmosphere roomAtmos)
         {
             try
             {
@@ -392,6 +305,18 @@ namespace BeefsRoomDefogger
             {
                 BeefsRoomDefoggerPlugin.Log.LogWarning($"Error calculating similarity: {ex.Message}");
                 return 0f;
+            }
+        }
+
+        private static void CacheConnectedRoomsResult(
+            HashSet<long> visitedRoomIds,
+            RoomVentingState ventingState,
+            float similarityRatio)
+        {
+            float currentTime = Time.time;
+            foreach (var roomId in visitedRoomIds)
+            {
+                RoomSealingCache[roomId] = new RoomSealingInfo(ventingState, similarityRatio, currentTime, 1);
             }
         }
 
@@ -471,6 +396,165 @@ namespace BeefsRoomDefogger
             {
                 BeefsRoomDefoggerPlugin.Log.LogWarning($"Error calculating temp range: {ex.Message}");
                 return 100.0;
+            }
+        }
+    }
+
+  public class FogControlPatcher : MonoBehaviour
+    {
+        private Room _lastPlayerRoom;
+        private float _originalFogStart;
+        private float _originalFogEnd;
+        private float _nextUpdateTime;
+        private bool _initialized = false;
+        private float _currentFogDistance = 0f;
+        private bool _isInSealedRoom = false;
+        private static float _lastCalculatedRoomDistance = -1f;
+        private static bool _lastPlayerInSealedRoom = false;
+        private static float _lastCalculationTime = 0f;
+        private static float _lastFogReductionMultiplier = 0f;
+
+        private const float HighSimilarityThreshold = 0.8f; // high thresh - above fog at max
+        private const float LowSimilarityThreshold = 0.3f; // low thresh for fog pushback
+        private const float UpdateFrequency = 1.0f; // .5s
+
+        private void Start()
+        {
+            if (!BeefsRoomDefoggerPlugin.EnableRoomDefogger.Value)
+            {
+                BeefsRoomDefoggerPlugin.Log.LogInfo("Beefs Room Defogger is disabled");
+                enabled = false;
+                return;
+            }
+            _originalFogStart = RenderSettings.fogStartDistance;
+            _originalFogEnd = RenderSettings.fogEndDistance;
+            _initialized = true;
+            BeefsRoomDefoggerPlugin.Log.LogInfo($"Beefs Room Defogger loaded");
+            InvokeRepeating(nameof(CleanupCache), 30f, 30f);
+        }
+
+        private void Update()
+        {
+            // using var _ = ModProfiler.Profile();
+
+            if (!BeefsRoomDefoggerPlugin.EnableRoomDefogger.Value)
+            {
+                return;
+            }
+
+            // in game?
+            if (WorldManager.Instance?.WorldSun?.TargetLight == null)
+            {
+                if (_initialized)
+                {
+                    // back at main menu - reset
+                    RenderSettings.fogStartDistance = _originalFogStart;
+                    RenderSettings.fogEndDistance = _originalFogEnd;
+                    _initialized = false;
+                    _isInSealedRoom = false;
+                    _lastPlayerRoom = null;
+                    _currentFogDistance = 0f;
+                    _lastCalculatedRoomDistance = -1f;
+                    _lastPlayerInSealedRoom = false;
+                    _lastCalculationTime = 0f;
+                    BeefsRoomController.ClearCache();
+                    BeefsRoomDefoggerPlugin.Log.LogInfo("Reset");
+                }
+                return;
+            }
+
+            if (!_initialized)
+            {
+                _originalFogStart = RenderSettings.fogStartDistance;
+                _originalFogEnd = RenderSettings.fogEndDistance;
+                BeefsRoomController.Initialize();
+                _initialized = true;
+                BeefsRoomDefoggerPlugin.Log.LogInfo($"Beefs Room Defogger initialized");
+                InvokeRepeating(nameof(CleanupCache), 30f, 30f);
+            }
+
+            if (Time.time < _nextUpdateTime)
+            {
+                return;
+            }
+
+            _nextUpdateTime = Time.time + UpdateFrequency;
+            var playerRoom = BeefsRoomController.GetRoom();
+
+            // quick exit cuz outside
+            if (playerRoom == null)
+            {
+                if (_isInSealedRoom)
+                {
+                    RestoreFog("Player is outside (no room)");
+                    _isInSealedRoom = false;
+                    _lastPlayerRoom = null;
+                }
+                return;
+            }
+
+			BeefsRoomController.ScheduleRoomCheck(playerRoom, this);
+
+			var cachedState = BeefsRoomController.GetCachedRoomState(playerRoom.RoomId);
+
+			BeefsRoomController.RoomVentingState ventingState = BeefsRoomController.RoomVentingState.Sealed;
+			float similarityRatio = 0.0f;
+
+			if (cachedState != null)
+			{
+				if (!cachedState.Value.IsStale)
+				{
+					// use cache
+					ventingState = cachedState.Value.VentingState;
+					similarityRatio = cachedState.Value.SimilarityRatio;
+				}
+				else
+				{
+					// use cache but its stale
+					ventingState = cachedState.Value.VentingState;
+					similarityRatio = cachedState.Value.SimilarityRatio;
+				}
+			}
+			else
+			{
+				// no cache! sealed until otherwise proven
+				ventingState = BeefsRoomController.RoomVentingState.Sealed;
+				similarityRatio = 0.0f;
+			}
+
+            if (ventingState == BeefsRoomController.RoomVentingState.Venting)
+            {
+                // we're open to atmo
+                if (_isInSealedRoom)
+                {
+                    RestoreFog("Room group is venting");
+                }
+                _isInSealedRoom = false;
+                _lastPlayerRoom = null;
+            }
+            else
+            {
+                // we're in a room but maybe it's not yet gucci in here
+                float fogReductionMultiplier = CalculateFogMultiplier(similarityRatio);
+                _lastFogReductionMultiplier = fogReductionMultiplier;
+
+                if (!_isInSealedRoom || playerRoom != _lastPlayerRoom)
+                {
+                    BeefsRoomDefoggerPlugin.Log.LogInfo($"Room: {playerRoom?.RoomId}, Similarity: {similarityRatio:F2}, Multiplier: {fogReductionMultiplier:F2}");
+                }
+
+                _isInSealedRoom = true;
+                _lastPlayerRoom = playerRoom;
+                UpdateFogDistance(playerRoom, fogReductionMultiplier);
+            }
+        }
+
+        private void OnDestroy()
+        {
+            if (_initialized)
+            {
+                RenderSettings.fogStartDistance = _originalFogStart;
+                RenderSettings.fogEndDistance = _originalFogEnd;
             }
         }
 
@@ -569,52 +653,7 @@ namespace BeefsRoomDefogger
 
         private void CleanupCache()
         {
-            var staleRooms = new List<long>();
-            foreach (var kvp in RoomSealingCache)
-            {
-                if (kvp.Value.IsStale)
-                {
-                    staleRooms.Add(kvp.Key);
-                }
-            }
-
-            foreach (var roomId in staleRooms)
-            {
-                var room = RoomController.Get(roomId);
-                if (room == null)
-                {
-                    RoomSealingCache.Remove(roomId);
-                }
-            }
-        }
-
-        private static Atmosphere GetCachedAtmosphere(Grid3 grid)
-        {
-            if (!TraversalAtmosphereCache.TryGetValue(grid, out var atmosphere))
-            {
-                atmosphere = AtmosphericsController.World.GetAtmosphereLocal(new WorldGrid(grid));
-                TraversalAtmosphereCache[grid] = atmosphere;
-            }
-            return atmosphere;
-        }
-
-        private static Room GetCachedRoom(Grid3 grid)
-        {
-            if (!TraversalRoomCache.TryGetValue(grid, out var room))
-            {
-                room = RoomController.World.GetRoom(grid);
-                TraversalRoomCache[grid] = room;
-            }
-            return room;
-        }
-
-        private static void CacheConnectedRoomsResult(HashSet<long> visitedRoomIds, RoomVentingState ventingState, float similarityRatio)
-        {
-            float currentTime = Time.time;
-            foreach (var roomId in visitedRoomIds)
-            {
-                RoomSealingCache[roomId] = new RoomSealingInfo(ventingState, similarityRatio, currentTime, 1);
-            }
+            BeefsRoomController.CleanupCache();
         }
 
         public static bool IsPlayerInSealedRoom()
