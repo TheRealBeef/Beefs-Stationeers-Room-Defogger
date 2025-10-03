@@ -1109,9 +1109,9 @@ namespace BeefsRoomDefogger
     {
         private static Component _sunFlares = null;
         private static PropertyInfo _opacityProperty = null;
-        private static PropertyInfo _dampingFactorProperty = null;
+        // private static PropertyInfo _dampingFactorProperty = null;
         private static float _originalOpacity = 1f;
-        private static float _originalDampingFactor = 0.1f;
+        // private static float _originalDampingFactor = 0.1f;
         private static bool _isInitialized = false;
 
         [HarmonyPostfix]
@@ -1124,6 +1124,11 @@ namespace BeefsRoomDefogger
 
                 if (!BeefsRoomDefoggerPlugin.StormChanges.Value)
                     return;
+
+                if (WeatherManager.CurrentWeatherEvent != null &&
+                    WeatherManager.CurrentWeatherEvent.Id == "SolarStorm")
+                    return;
+
 
                 if (WorldManager.Instance?.WorldSun?.TargetLight == null)
                 {
@@ -1139,7 +1144,7 @@ namespace BeefsRoomDefogger
                     InitializeLensFlares();
                 }
 
-                if (_sunFlares == null || _opacityProperty == null || _dampingFactorProperty == null)
+                if (_sunFlares == null || _opacityProperty == null) // || _dampingFactorProperty == null)
                 {
                     return;
                 }
@@ -1147,12 +1152,12 @@ namespace BeefsRoomDefogger
                 if (__instance.IsStormActive)
                 {
                     _opacityProperty.SetValue(_sunFlares, _originalOpacity * 0.05f);
-                    _dampingFactorProperty.SetValue(_sunFlares, 0.01f);
+                    // _dampingFactorProperty.SetValue(_sunFlares, 0.01f);
                 }
                 else
                 {
                     _opacityProperty.SetValue(_sunFlares, _originalOpacity);
-                    _dampingFactorProperty.SetValue(_sunFlares, _originalDampingFactor);
+                    // _dampingFactorProperty.SetValue(_sunFlares, _originalDampingFactor);
                 }
             }
             catch (System.Exception ex)
@@ -1180,12 +1185,12 @@ namespace BeefsRoomDefogger
                     if (_sunFlares != null)
                     {
                         _opacityProperty = _sunFlares.GetType().GetProperty("Opacity");
-                        _dampingFactorProperty = _sunFlares.GetType().GetProperty("DampingFactor");
+                        // _dampingFactorProperty = _sunFlares.GetType().GetProperty("DampingFactor");
 
                         if (_opacityProperty != null && _dampingFactorProperty != null)
                         {
                             _originalOpacity = (float)_opacityProperty.GetValue(_sunFlares);
-                            _originalDampingFactor = (float)_dampingFactorProperty.GetValue(_sunFlares);
+                            // _originalDampingFactor = (float)_dampingFactorProperty.GetValue(_sunFlares);
                             _isInitialized = true;
                         }
                     }
@@ -1204,12 +1209,12 @@ namespace BeefsRoomDefogger
                 if (_sunFlares != null && _opacityProperty != null && _dampingFactorProperty != null)
                 {
                     _opacityProperty.SetValue(_sunFlares, _originalOpacity);
-                    _dampingFactorProperty.SetValue(_sunFlares, _originalDampingFactor);
+                    // _dampingFactorProperty.SetValue(_sunFlares, _originalDampingFactor);
                 }
                 _isInitialized = false;
                 _sunFlares = null;
                 _opacityProperty = null;
-                _dampingFactorProperty = null;
+                // _dampingFactorProperty = null;
             }
             catch (System.Exception ex)
             {
