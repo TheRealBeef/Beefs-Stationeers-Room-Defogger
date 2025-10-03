@@ -3,7 +3,7 @@
         <TargetFramework>netstandard2.1</TargetFramework>
         <AssemblyTitle>BeefsRoomDefogger</AssemblyTitle>
         <Product>BeefsRoomDefogger</Product>
-        <Version>1.0.0</Version>
+        <Version>1.1.0</Version>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <LangVersion>latest</LangVersion>
         <RootNamespace>BeefsRoomDefogger</RootNamespace>
@@ -47,6 +47,10 @@
         </Reference>
         <Reference Include="Unity.Collections">
             <HintPath>$(GameDir)\rocketstation_Data\Managed\Unity.Collections.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="UnityEngine.IMGUIModule">
+            <HintPath>$(GameDir)\rocketstation_Data\Managed\UnityEngine.IMGUIModule.dll</HintPath>
             <Private>False</Private>
         </Reference>
     </ItemGroup>

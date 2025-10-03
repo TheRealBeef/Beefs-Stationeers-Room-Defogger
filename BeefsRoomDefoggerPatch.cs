@@ -1187,7 +1187,7 @@ namespace BeefsRoomDefogger
                         _opacityProperty = _sunFlares.GetType().GetProperty("Opacity");
                         // _dampingFactorProperty = _sunFlares.GetType().GetProperty("DampingFactor");
 
-                        if (_opacityProperty != null && _dampingFactorProperty != null)
+                        if (_opacityProperty != null) // && _dampingFactorProperty != null)
                         {
                             _originalOpacity = (float)_opacityProperty.GetValue(_sunFlares);
                             // _originalDampingFactor = (float)_dampingFactorProperty.GetValue(_sunFlares);
@@ -1206,7 +1206,7 @@ namespace BeefsRoomDefogger
         {
             try
             {
-                if (_sunFlares != null && _opacityProperty != null && _dampingFactorProperty != null)
+                if (_sunFlares != null && _opacityProperty != null) // && _dampingFactorProperty != null)
                 {
                     _opacityProperty.SetValue(_sunFlares, _originalOpacity);
                     // _dampingFactorProperty.SetValue(_sunFlares, _originalDampingFactor);
