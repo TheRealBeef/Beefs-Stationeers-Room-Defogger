@@ -41,6 +41,14 @@
             <HintPath>$(BepInExDir)\core\0Harmony.dll</HintPath>
             <Private>False</Private>
         </Reference>
+        <Reference Include="Unity.Mathematics">
+            <HintPath>$(GameDir)\rocketstation_Data\Managed\Unity.Mathematics.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="Unity.Collections">
+            <HintPath>$(GameDir)\rocketstation_Data\Managed\Unity.Collections.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
     </ItemGroup>
 
     <ItemGroup>

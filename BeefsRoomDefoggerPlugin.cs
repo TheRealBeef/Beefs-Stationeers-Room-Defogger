@@ -14,6 +14,7 @@ namespace BeefsRoomDefogger
         public static ConfigEntry<float> IndoorFogBuffer;
         public static ConfigEntry<float> AdjustmentSpeed;
         public static ConfigEntry<float> ExtraFog;
+        public static ConfigEntry<bool> StormChanges;
         public static ManualLogSource Log;
 
         private void Awake()
@@ -32,6 +33,9 @@ namespace BeefsRoomDefogger
 
             ExtraFog = Config.Bind("General", "ExtraFog", 0.0f,
                 new ConfigDescription("Extra fog distance for outdoor atmospheric scattering. Higher = more foggy outside.", new AcceptableValueRange<float>(0f, 20f)));
+
+            StormChanges = Config.Bind("Weather", "StormChanges", true,
+            "Dims the sun during storm and prevent storm particles from spawning inside terrain walled rooms.");
 
             Log.LogInfo($"Plugin {PluginInfo.PLUGIN_NAME} is loaded!");
 

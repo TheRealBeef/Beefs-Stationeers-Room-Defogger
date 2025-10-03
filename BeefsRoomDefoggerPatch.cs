@@ -11,6 +11,11 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using StationeersModProfileLib;
+using Assets.Scripts.Weather;
+using Unity.Mathematics;
+using Unity.Collections;
+using Weather;
+using System.Reflection;
 
 namespace BeefsRoomDefogger
 {
@@ -39,13 +44,15 @@ namespace BeefsRoomDefogger
             public readonly float SimilarityRatio;
             public readonly float LastChecked;
             public readonly int TraversalDepth;
+            public readonly HashSet<int3> VentingGrids;
 
-            public RoomSealingInfo(RoomVentingState ventingState, float similarityRatio, float lastChecked, int depth)
+            public RoomSealingInfo(RoomVentingState ventingState, float similarityRatio, float lastChecked, int depth, HashSet<int3> ventingGrids)
             {
                 VentingState = ventingState;
                 SimilarityRatio = similarityRatio;
                 LastChecked = lastChecked;
                 TraversalDepth = depth;
+                VentingGrids = ventingGrids ?? new HashSet<int3>();
             }
 
             public bool IsStale => Time.time - LastChecked > CacheExpirySeconds;
@@ -137,28 +144,30 @@ namespace BeefsRoomDefogger
 
             RoomVentingState ventingState = RoomVentingState.Sealed;
             float similarityRatio = 0.0f;
+            HashSet<int3> ventingGrids = new HashSet<int3>();
 
             if (roomAtmos != null)
             {
-                yield return IsAtmosphereGroupVentingCoroutine(roomAtmos, (state, similarity) => {
+                yield return IsAtmosphereGroupVentingCoroutine(roomAtmos, (state, similarity, grids) => {
                     ventingState = state;
                     similarityRatio = similarity;
+                    ventingGrids = grids;
                 });
             }
 
-            RoomSealingCache[room.RoomId] = new RoomSealingInfo(ventingState, similarityRatio, Time.time, 1);
+            RoomSealingCache[room.RoomId] = new RoomSealingInfo(ventingState, similarityRatio, Time.time, 1, ventingGrids);
             _sealingCheckInProgress = false;
         }
 
         private static IEnumerator IsAtmosphereGroupVentingCoroutine(
             Atmosphere startAtmos,
-            System.Action<RoomVentingState, float> callback)
+            System.Action<RoomVentingState, float, HashSet<int3>> callback)
         {
             // ~0.09ms but is coroutine so is fine
             // using var _ = ModProfiler.Profile();
             if (startAtmos?.Room == null)
             {
-                callback(RoomVentingState.Venting, 1.0f);
+                callback(RoomVentingState.Venting, 1.0f, new HashSet<int3>());
                 yield break;
             }
 
@@ -168,6 +177,7 @@ namespace BeefsRoomDefogger
             var visitedRooms = new HashSet<long>();
             var roomsToCheck = new Queue<(Room room, int depth)>();
             var connectedRoomGroup = new HashSet<long>();
+            var ventingGrids = new HashSet<int3>();
 
             var startRoom = startAtmos.Room;
             roomsToCheck.Enqueue((startRoom, 0));
@@ -207,6 +217,7 @@ namespace BeefsRoomDefogger
                         if (neighborRoom == null)
                         {
                             foundVenting = true;
+                            ventingGrids.Add(grid.Value);
                         }
 
                         if (neighborRoom != null &&
@@ -236,9 +247,9 @@ namespace BeefsRoomDefogger
                 similarityRatio = SimilarityToWorldAtmo(startAtmos);
             }
 
-            CacheConnectedRoomsResult(connectedRoomGroup, ventingState, similarityRatio);
+            CacheConnectedRoomsResult(connectedRoomGroup, ventingState, similarityRatio, ventingGrids);
 
-            callback(ventingState, similarityRatio);
+            callback(ventingState, similarityRatio, ventingGrids);
         }
 
         private static Atmosphere GetCachedAtmosphere(Grid3 grid)
@@ -311,12 +322,13 @@ namespace BeefsRoomDefogger
         private static void CacheConnectedRoomsResult(
             HashSet<long> visitedRoomIds,
             RoomVentingState ventingState,
-            float similarityRatio)
+            float similarityRatio,
+            HashSet<int3> ventingGrids)
         {
             float currentTime = Time.time;
             foreach (var roomId in visitedRoomIds)
             {
-                RoomSealingCache[roomId] = new RoomSealingInfo(ventingState, similarityRatio, currentTime, 1);
+                RoomSealingCache[roomId] = new RoomSealingInfo(ventingState, similarityRatio, currentTime, 1, ventingGrids);
             }
         }
 
@@ -397,6 +409,23 @@ namespace BeefsRoomDefogger
                 BeefsRoomDefoggerPlugin.Log.LogWarning($"Error calculating temp range: {ex.Message}");
                 return 100.0;
             }
+        }
+
+        public static HashSet<Room> GetRoomsFromStormGrid(Dictionary<int3, byte> stormRoomGrids)
+        {
+            var rooms = new HashSet<Room>();
+
+            foreach (var gridInt3 in stormRoomGrids.Keys)
+            {
+                var grid = new Grid3(gridInt3.x, gridInt3.y, gridInt3.z);
+                var room = RoomController.World?.GetRoom(grid);
+                if (room != null)
+                {
+                    rooms.Add(room);
+                }
+            }
+
+            return rooms;
         }
     }
 
@@ -779,6 +808,412 @@ namespace BeefsRoomDefogger
             catch (System.Exception ex)
             {
                 BeefsRoomDefoggerPlugin.Log.LogError($"Error pushing scattering: {ex.Message}");
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(StormLocal), "UpdateStormField")]
+    public static class StormLocalRoomBlocker
+    {
+        private static FieldInfo _blockedAirGridsField = AccessTools.Field(typeof(StormLocal), "_blockedAirGrids");
+        private static FieldInfo _roomGridsField = AccessTools.Field(typeof(StormLocal), "_roomGrids");
+
+        private static HashSet<int3> _roomGridsToAdd = new HashSet<int3>();
+        private static HashSet<int3> _lastAddedGrids = new HashSet<int3>();
+        private static float _lastSealedRoomsUpdate = 0f;
+
+        [HarmonyPostfix]
+        public static void AddRoomGrids(StormLocal __instance)
+        {
+            try
+            {
+                if (!BeefsRoomDefoggerPlugin.EnableRoomDefogger.Value)
+                    return;
+
+                if (!BeefsRoomDefoggerPlugin.StormChanges.Value)
+                    return;
+
+                if (Time.time - _lastSealedRoomsUpdate > 1f)
+                {
+                    bool roomStateChanged = UpdateSealedRoomsFromStormData(__instance);
+                    _lastSealedRoomsUpdate = Time.time;
+
+                    if (roomStateChanged)
+                    {
+                        __instance.MarkAsStale();
+                    }
+                }
+
+                if (_roomGridsToAdd.Count == 0)
+                    return;
+
+                var blockedAirGrids = _blockedAirGridsField.GetValue(__instance) as NativeHashMap<int3, byte>?;
+
+                if (!blockedAirGrids.HasValue || !blockedAirGrids.Value.IsCreated)
+                    return;
+
+                var blockedAirGridsMap = blockedAirGrids.Value;
+
+                foreach (var grid in _lastAddedGrids)
+                {
+                    if (!_roomGridsToAdd.Contains(grid))
+                    {
+                        blockedAirGridsMap.Remove(grid);
+                    }
+                }
+
+                var newAddedGrids = new HashSet<int3>();
+
+                foreach (var grid in _roomGridsToAdd)
+                {
+                    blockedAirGridsMap.TryAdd(grid, 0);
+                    newAddedGrids.Add(grid);
+                }
+
+                _lastAddedGrids = newAddedGrids;
+            }
+            catch (System.Exception ex)
+            {
+                BeefsRoomDefoggerPlugin.Log.LogError($"Error adding room grids: {ex.Message}\n{ex.StackTrace}");
+            }
+        }
+
+        private static bool UpdateSealedRoomsFromStormData(StormLocal stormLocal)
+        {
+            var previousGrids = new HashSet<int3>(_roomGridsToAdd);
+            _roomGridsToAdd.Clear();
+
+            var roomGrids = _roomGridsField.GetValue(stormLocal) as NativeHashMap<int3, byte>?;
+
+            if (!roomGrids.HasValue || !roomGrids.Value.IsCreated)
+                return false;
+
+            var stormRoomGridsDict = new Dictionary<int3, byte>();
+            var keys = roomGrids.Value.GetKeyArray(Allocator.Temp);
+            try
+            {
+                foreach (var key in keys)
+                {
+                    stormRoomGridsDict[key] = roomGrids.Value[key];
+                }
+            }
+            finally
+            {
+                keys.Dispose();
+            }
+
+            var roomsInStormArea = BeefsRoomController.GetRoomsFromStormGrid(stormRoomGridsDict);
+
+            var fogController = UnityEngine.Object.FindObjectOfType<FogControlPatcher>();
+            if (fogController != null)
+            {
+                foreach (var room in roomsInStormArea)
+                {
+                    var state = BeefsRoomController.GetCachedRoomState(room.RoomId);
+                    if (state == null)
+                    {
+                        BeefsRoomController.ScheduleRoomCheck(room, fogController);
+                    }
+                }
+            }
+
+            UpdateSealedRoomsAndPunchHoleForVentingGrid(roomsInStormArea);
+            // UpdateSealedRooms(roomsInStormArea);
+
+            return !_roomGridsToAdd.SetEquals(previousGrids);
+        }
+
+        private static void UpdateSealedRoomsAndPunchHoleForVentingGrid(HashSet<Room> roomsInStormArea)
+        {
+            foreach (var room in roomsInStormArea)
+            {
+                var state = BeefsRoomController.GetCachedRoomState(room.RoomId);
+
+                if (state == null)
+                {
+                    var roomGridsToBlock = new HashSet<int3>();
+                    foreach (var gridWrapper in room.Grids)
+                        roomGridsToBlock.Add(gridWrapper.Value);
+
+                    ExpandRoom(roomGridsToBlock);
+                    _roomGridsToAdd.UnionWith(roomGridsToBlock);
+                    continue;
+                }
+
+                var roomGridsToBlockFinal = new HashSet<int3>();
+                foreach (var gridWrapper in room.Grids)
+                    roomGridsToBlockFinal.Add(gridWrapper.Value);
+
+                ExpandRoom(roomGridsToBlockFinal);
+                _roomGridsToAdd.UnionWith(roomGridsToBlockFinal);
+
+                foreach (var ventingGrid in state.Value.VentingGrids)
+                {
+                    PunchAHoleWhereItsVenting(ventingGrid, roomGridsToBlockFinal);
+                }
+            }
+        }
+
+        // private static void UpdateSealedRooms(HashSet<Room> roomsInStormArea)
+        // {
+        //     var sealedRoomGrids = new HashSet<int3>();
+        //
+        //     foreach (var room in roomsInStormArea)
+        //     {
+        //         var state = BeefsRoomController.GetCachedRoomState(room.RoomId);
+        //
+        //         if (state == null || state.Value.VentingState == BeefsRoomController.RoomVentingState.Sealed)
+        //         {
+        //             foreach (var gridWrapper in room.Grids)
+        //                 sealedRoomGrids.Add(gridWrapper.Value);
+        //         }
+        //     }
+        //
+        //     ExpandRoom(sealedRoomGrids);
+        //     _roomGridsToAdd.UnionWith(sealedRoomGrids);
+        // }
+
+        private static void ExpandRoom(HashSet<int3> roomGrids)
+        {
+            int expansionStep = 20;
+            int gridsToExpand = 1;
+
+            var expandedGrids = new HashSet<int3>();
+            foreach (var grid in roomGrids.ToList())
+            {
+                for (int dx = -gridsToExpand; dx <= gridsToExpand; dx++)
+                {
+                    for (int dy = -gridsToExpand; dy <= gridsToExpand; dy++)
+                    {
+                        for (int dz = -gridsToExpand; dz <= gridsToExpand; dz++)
+                        {
+                            if (dx == 0 && dy == 0 && dz == 0)
+                                continue;
+
+                            expandedGrids.Add(new int3(
+                                grid.x + dx * expansionStep,
+                                grid.y + dy * expansionStep,
+                                grid.z + dz * expansionStep
+                            ));
+                        }
+                    }
+                }
+            }
+
+            roomGrids.UnionWith(expandedGrids);
+        }
+
+        private static void PunchAHoleWhereItsVenting(int3 ventingGrid, HashSet<int3> blockedGrids)
+        {
+            int expansionStep = 20;
+            int gridsToExpand = 1;
+
+            for (int dx = -gridsToExpand; dx <= gridsToExpand; dx++)
+            {
+                for (int dy = -gridsToExpand; dy <= gridsToExpand; dy++)
+                {
+                    for (int dz = -gridsToExpand; dz <= gridsToExpand; dz++)
+                    {
+                        var openingGrid = new int3(
+                            ventingGrid.x + dx * expansionStep,
+                            ventingGrid.y + dy * expansionStep,
+                            ventingGrid.z + dz * expansionStep
+                        );
+
+                        blockedGrids.Remove(openingGrid);
+                        _roomGridsToAdd.Remove(openingGrid);
+                    }
+                }
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(StormLocal), "Update")]
+    public static class StormLocalFogPatcher
+    {
+        private static float _targetStormFogStart = float.MinValue;
+        private static float _targetStormFogEnd = float.MinValue;
+        private static float _currentStormFogStart = float.MinValue;
+        private static float _currentStormFogEnd = float.MinValue;
+        private static bool _isInitialized = false;
+
+        private const float FogOffset = -5f;
+
+        [HarmonyPostfix]
+        public static void UpdatePostfix(StormLocal __instance)
+        {
+            try
+            {
+                if (!BeefsRoomDefoggerPlugin.EnableRoomDefogger.Value || !__instance.IsStormActive || WeatherManager.CurrentWeatherEvent?.Fog == null)
+                    return;
+
+                if (!BeefsRoomDefoggerPlugin.StormChanges.Value)
+                    return;
+
+                if (WorldManager.Instance?.WorldSun?.TargetLight == null)
+                {
+                    _isInitialized = false;
+                    return;
+                }
+
+                if (!_isInitialized)
+                {
+                    _currentStormFogStart = RenderSettings.fogStartDistance;
+                    _currentStormFogEnd = RenderSettings.fogEndDistance;
+                    _targetStormFogStart = _currentStormFogStart;
+                    _targetStormFogEnd = _currentStormFogEnd;
+                    _isInitialized = true;
+                }
+
+                float roomBoundaryDistance = FogControlPatcher.GetRoomBoundaryDistance();
+                bool isPlayerInSealedRoom = FogControlPatcher.IsPlayerInSealedRoom();
+
+                float newTargetStart, newTargetEnd;
+                if (isPlayerInSealedRoom && roomBoundaryDistance > 0f)
+                {
+                    newTargetStart = roomBoundaryDistance + WeatherManager.CurrentWeatherEvent.Fog.StartDistance;
+                    newTargetEnd = roomBoundaryDistance + WeatherManager.CurrentWeatherEvent.Fog.EndDistance;
+                }
+                else
+                {
+                    newTargetStart = Mathf.Max(0f, WeatherManager.CurrentWeatherEvent.Fog.StartDistance + FogOffset);
+                    newTargetEnd = Mathf.Max(0f, WeatherManager.CurrentWeatherEvent.Fog.EndDistance + FogOffset);
+                }
+
+                if (Mathf.Abs(newTargetStart - _targetStormFogStart) > 0.1f || Mathf.Abs(newTargetEnd - _targetStormFogEnd) > 0.1f)
+                {
+                    _targetStormFogStart = newTargetStart;
+                    _targetStormFogEnd = newTargetEnd;
+                }
+
+                float maxMove = BeefsRoomDefoggerPlugin.AdjustmentSpeed.Value * Time.deltaTime;
+                _currentStormFogStart = Mathf.MoveTowards(_currentStormFogStart, _targetStormFogStart, maxMove);
+                _currentStormFogEnd = Mathf.MoveTowards(_currentStormFogEnd, _targetStormFogEnd, maxMove);
+
+                if (Mathf.Abs(RenderSettings.fogStartDistance - _currentStormFogStart) > 0.1f ||
+                    Mathf.Abs(RenderSettings.fogEndDistance - _currentStormFogEnd) > 0.1f)
+                {
+                    RenderSettings.fogStartDistance = _currentStormFogStart;
+                    RenderSettings.fogEndDistance = _currentStormFogEnd;
+                }
+            }
+            catch (System.Exception ex)
+            {
+                BeefsRoomDefoggerPlugin.Log.LogError($"Error in storm fog update: {ex.Message}");
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(StormLocal), "Update")]
+    public static class StormLensFlareDimmer
+    {
+        private static Component _sunFlares = null;
+        private static PropertyInfo _opacityProperty = null;
+        private static PropertyInfo _dampingFactorProperty = null;
+        private static float _originalOpacity = 1f;
+        private static float _originalDampingFactor = 0.1f;
+        private static bool _isInitialized = false;
+
+        [HarmonyPostfix]
+        public static void DimLensFlaresDuringStorm(StormLocal __instance)
+        {
+            try
+            {
+                if (!BeefsRoomDefoggerPlugin.EnableRoomDefogger.Value)
+                    return;
+
+                if (!BeefsRoomDefoggerPlugin.StormChanges.Value)
+                    return;
+
+                if (WorldManager.Instance?.WorldSun?.TargetLight == null)
+                {
+                    if (_isInitialized)
+                    {
+                        RestoreLensFlares();
+                    }
+                    return;
+                }
+
+                if (!_isInitialized)
+                {
+                    InitializeLensFlares();
+                }
+
+                if (_sunFlares == null || _opacityProperty == null || _dampingFactorProperty == null)
+                {
+                    return;
+                }
+
+                if (__instance.IsStormActive)
+                {
+                    _opacityProperty.SetValue(_sunFlares, _originalOpacity * 0.05f);
+                    _dampingFactorProperty.SetValue(_sunFlares, 0.01f);
+                }
+                else
+                {
+                    _opacityProperty.SetValue(_sunFlares, _originalOpacity);
+                    _dampingFactorProperty.SetValue(_sunFlares, _originalDampingFactor);
+                }
+            }
+            catch (System.Exception ex)
+            {
+                BeefsRoomDefoggerPlugin.Log.LogError($"Error! The sun cannot be dimmed it's too powerful: {ex.Message}");
+            }
+        }
+
+        private static void InitializeLensFlares()
+        {
+            try
+            {
+                if (RenderSettings.sun != null)
+                {
+                    var allComponents = RenderSettings.sun.GetComponents<Component>();
+                    foreach (var component in allComponents)
+                    {
+                        if (component.GetType().Name == "EasyFlares")
+                        {
+                            _sunFlares = component;
+                            break;
+                        }
+                    }
+
+                    if (_sunFlares != null)
+                    {
+                        _opacityProperty = _sunFlares.GetType().GetProperty("Opacity");
+                        _dampingFactorProperty = _sunFlares.GetType().GetProperty("DampingFactor");
+
+                        if (_opacityProperty != null && _dampingFactorProperty != null)
+                        {
+                            _originalOpacity = (float)_opacityProperty.GetValue(_sunFlares);
+                            _originalDampingFactor = (float)_dampingFactorProperty.GetValue(_sunFlares);
+                            _isInitialized = true;
+                        }
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                BeefsRoomDefoggerPlugin.Log.LogError($"Error initializing sun lens flare control: {ex.Message}");
+            }
+        }
+
+        private static void RestoreLensFlares()
+        {
+            try
+            {
+                if (_sunFlares != null && _opacityProperty != null && _dampingFactorProperty != null)
+                {
+                    _opacityProperty.SetValue(_sunFlares, _originalOpacity);
+                    _dampingFactorProperty.SetValue(_sunFlares, _originalDampingFactor);
+                }
+                _isInitialized = false;
+                _sunFlares = null;
+                _opacityProperty = null;
+                _dampingFactorProperty = null;
+            }
+            catch (System.Exception ex)
+            {
+                BeefsRoomDefoggerPlugin.Log.LogError($"Error restoring lens flares: {ex.Message}");
             }
         }
     }
