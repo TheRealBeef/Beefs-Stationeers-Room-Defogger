@@ -92,10 +92,19 @@ namespace BeefsRoomDefogger
             return null;
         }
 
+
         public static void ScheduleRoomCheck(Room room, MonoBehaviour caller)
         {
             if (room == null || _sealingCheckInProgress) return;
-            caller.StartCoroutine(CheckRoomStateCoroutine(room));
+            var rooms = new HashSet<Room> { room };
+            caller.StartCoroutine(CheckRoomStateCoroutine(rooms));
+        }
+
+
+        public static void ScheduleRoomCheck(HashSet<Room> rooms, MonoBehaviour caller)
+        {
+            if (rooms == null || rooms.Count == 0 || _sealingCheckInProgress) return;
+            caller.StartCoroutine(CheckRoomStateCoroutine(rooms));
         }
 
         public static void CleanupCache()
@@ -127,35 +136,39 @@ namespace BeefsRoomDefogger
             _sealingCheckInProgress = false;
         }
 
-        private static IEnumerator CheckRoomStateCoroutine(Room room)
+        private static IEnumerator CheckRoomStateCoroutine(HashSet<Room> rooms)
         {
             if (_sealingCheckInProgress) yield break;
             _sealingCheckInProgress = true;
 
-            Atmosphere roomAtmos = null;
-
-            foreach (var grid in room.Grids)
+            foreach (var room in rooms)
             {
-                roomAtmos = AtmosphericsController.World.GetAtmosphereLocal(grid);
-                if (roomAtmos != null) break;
-                if (room.Grids.IndexOf(grid) % 10 == 0)
-                    yield return null;
+                Atmosphere roomAtmos = null;
+
+                foreach (var grid in room.Grids)
+                {
+                    roomAtmos = AtmosphericsController.World.GetAtmosphereLocal(grid);
+                    if (roomAtmos != null) break;
+                    if (room.Grids.IndexOf(grid) % 10 == 0)
+                        yield return null;
+                }
+
+                RoomVentingState ventingState = RoomVentingState.Sealed;
+                float similarityRatio = 0.0f;
+                HashSet<int3> ventingGrids = new HashSet<int3>();
+
+                if (roomAtmos != null)
+                {
+                    yield return IsAtmosphereGroupVentingCoroutine(roomAtmos, (state, similarity, grids) => {
+                        ventingState = state;
+                        similarityRatio = similarity;
+                        ventingGrids = grids;
+                    });
+                }
+
+                RoomSealingCache[room.RoomId] = new RoomSealingInfo(ventingState, similarityRatio, Time.time, 1, ventingGrids);
             }
 
-            RoomVentingState ventingState = RoomVentingState.Sealed;
-            float similarityRatio = 0.0f;
-            HashSet<int3> ventingGrids = new HashSet<int3>();
-
-            if (roomAtmos != null)
-            {
-                yield return IsAtmosphereGroupVentingCoroutine(roomAtmos, (state, similarity, grids) => {
-                    ventingState = state;
-                    similarityRatio = similarity;
-                    ventingGrids = grids;
-                });
-            }
-
-            RoomSealingCache[room.RoomId] = new RoomSealingInfo(ventingState, similarityRatio, Time.time, 1, ventingGrids);
             _sealingCheckInProgress = false;
         }
 
@@ -817,6 +830,9 @@ namespace BeefsRoomDefogger
     {
         private static FieldInfo _blockedAirGridsField = AccessTools.Field(typeof(StormLocal), "_blockedAirGrids");
         private static FieldInfo _roomGridsField = AccessTools.Field(typeof(StormLocal), "_roomGrids");
+        private static float _lastStormForcedUpdate = 0f;
+        private const float ForceStormUpdateInterval = 5f;
+
 
         private static HashSet<int3> _roomGridsToAdd = new HashSet<int3>();
         private static HashSet<int3> _lastAddedGrids = new HashSet<int3>();
@@ -833,6 +849,38 @@ namespace BeefsRoomDefogger
                 if (!BeefsRoomDefoggerPlugin.StormChanges.Value)
                     return;
 
+                if (NetworkManager.IsActive)
+                {
+                    // BeefsRoomDefoggerPlugin.Log.LogInfo("Storm grid modifications disabled in multiplayer");
+                    return;
+                }
+
+                if (!__instance.IsStormActive)
+                {
+                    if (_roomGridsToAdd.Count > 0 || _lastAddedGrids.Count > 0)
+                    {
+                        var blockedAirGridsCleanup = _blockedAirGridsField.GetValue(__instance) as NativeHashMap<int3, byte>?;
+                        if (blockedAirGridsCleanup.HasValue && blockedAirGridsCleanup.Value.IsCreated)
+                        {
+                            var blockedAirGridsMapCleanup = blockedAirGridsCleanup.Value;
+
+                            foreach (var grid in _lastAddedGrids)
+                            {
+                                blockedAirGridsMapCleanup.Remove(grid);
+                            }
+
+                            BeefsRoomDefoggerPlugin.Log.LogInfo($"Removed {_lastAddedGrids.Count} grids on storm stop");
+                        }
+
+                        _roomGridsToAdd.Clear();
+                        _lastAddedGrids.Clear();
+                        _lastSealedRoomsUpdate = 0f;
+                        BeefsRoomController.ClearCache();
+                        __instance.MarkAsStale();
+                    }
+                    return;
+                }
+
                 if (Time.time - _lastSealedRoomsUpdate > 1f)
                 {
                     bool roomStateChanged = UpdateSealedRoomsFromStormData(__instance);
@@ -842,6 +890,12 @@ namespace BeefsRoomDefogger
                     {
                         __instance.MarkAsStale();
                     }
+                }
+
+                if (Time.time - _lastStormForcedUpdate > ForceStormUpdateInterval)
+                {
+                    __instance.MarkAsStale();
+                    _lastStormForcedUpdate = Time.time;
                 }
 
                 if (_roomGridsToAdd.Count == 0)
@@ -880,6 +934,9 @@ namespace BeefsRoomDefogger
 
         private static bool UpdateSealedRoomsFromStormData(StormLocal stormLocal)
         {
+            if (NetworkManager.IsActive)
+                return false;
+
             var previousGrids = new HashSet<int3>(_roomGridsToAdd);
             _roomGridsToAdd.Clear();
 
@@ -907,18 +964,24 @@ namespace BeefsRoomDefogger
             var fogController = UnityEngine.Object.FindObjectOfType<FogControlPatcher>();
             if (fogController != null)
             {
+                var roomsNeedingCheck = new HashSet<Room>();
+
                 foreach (var room in roomsInStormArea)
                 {
                     var state = BeefsRoomController.GetCachedRoomState(room.RoomId);
-                    if (state == null)
+                    if (state == null || state.Value.IsStale || Time.time - state.Value.LastChecked > 5f)
                     {
-                        BeefsRoomController.ScheduleRoomCheck(room, fogController);
+                        roomsNeedingCheck.Add(room);
                     }
+                }
+
+                if (roomsNeedingCheck.Count > 0)
+                {
+                    BeefsRoomController.ScheduleRoomCheck(roomsNeedingCheck, fogController);
                 }
             }
 
             UpdateSealedRoomsAndPunchHoleForVentingGrid(roomsInStormArea);
-            // UpdateSealedRooms(roomsInStormArea);
 
             return !_roomGridsToAdd.SetEquals(previousGrids);
         }
@@ -949,8 +1012,16 @@ namespace BeefsRoomDefogger
 
                 foreach (var ventingGrid in state.Value.VentingGrids)
                 {
-                    PunchAHoleWhereItsVenting(ventingGrid, roomGridsToBlockFinal);
+                    PunchAHoleWhereItsVenting(ventingGrid, _roomGridsToAdd);
                 }
+
+                // if (state.Value.VentingState == BeefsRoomController.RoomVentingState.Sealed)
+                // {
+                //     foreach (var gridWrapper in room.Grids)
+                //     {
+                //         _roomGridsToAdd.Add(gridWrapper.Value);
+                //     }
+                // }
             }
         }
 

@@ -32,6 +32,9 @@ Configuration available through StationeersLaunchPad config or BepInEx config fi
 
 ## Changelog
 
+>### Version 1.1.1
+> - Disabled storm particle changes (fog effect remains stays) in multiplayer until replication is resolved
+
 >### Version 1.1.0
 >- Improved handling of terrain-walled rooms during storms. Now your closed-in/pressurized tunnels won't get storm particles
 >- Overrides the storm fog effect now as well

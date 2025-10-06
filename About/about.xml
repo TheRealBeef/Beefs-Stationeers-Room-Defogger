@@ -2,7 +2,7 @@
 <ModMetadata xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
     <Name>Beef's Room Defogger</Name>
     <Author>TheRealBeef</Author>
-    <Version>1.1.0</Version>
+    <Version>1.1.1</Version>
 
     <Description>
         [h1]Beef's Room Defogger[/h1]
@@ -31,6 +31,9 @@
     </Description>
 
     <ChangeLog>
+        Version 1.1.1
+        - Disabled storm particle changes (fog effect remains stays) in multiplayer until replication is resolved
+
         Version 1.1.0
         - Improved handling of terrain-walled rooms during storms. Now your closed-in/pressurized tunnels won't get storm particles
         - Overrides the storm fog effect now as well

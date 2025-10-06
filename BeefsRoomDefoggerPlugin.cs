@@ -66,11 +66,13 @@ namespace BeefsRoomDefogger
 
             Update1_1_0_Popup = AddUpdatePopup(
                 "Update1_1_0_Popup",
-                "Beef's Room Defogger was Updated to v1.1.0!",
+                "Beef's Room Defogger was Updated to v1.1.1!",
                 "Changelog v1.1.0:\n" +
                 "- Improved handling of terrain-walled rooms during storms. Now your closed-in/pressurized tunnels won't get storm particles\n" +
                 "- Overrides the storm fog effect now as well\n" +
-                "- Added sun dimming for storms (minus solar storm of course)\n",
+                "- Added sun dimming for storms (minus solar storm of course)\n\n" +
+                "Changelog v1.1.1:\n" +
+                "- Disabled storm particle changes (fog effect remains stays) in multiplayer until replication is resolved",
                 defaultSeen: false);
 
             popupQueue = new Queue<UpdatePopupItem>();
