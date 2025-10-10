@@ -208,22 +208,18 @@ namespace BeefsRoomDefogger
                 // ~0.01ms avg to 0.03 worst case
                 // using var _2 = ModProfiler.ProfileSubsection("Check Neighbors");
                 currentIteration++;
-                iterationsSinceYield++;
-
-                if (iterationsSinceYield >= 10)
-                {
-                    iterationsSinceYield = 0;
-                    yield return null;
-                }
 
                 var (currentRoom, currentDepth) = roomsToCheck.Dequeue();
+                var gridsToProcess = currentRoom.Grids.ToList();
 
-                foreach (var grid in currentRoom.Grids)
+                foreach (var grid in gridsToProcess)
                 {
                     var atmosphere = GetCachedAtmosphere(grid.Value);
                     if (atmosphere == null) continue;
 
-                    foreach (var neighborGrid in atmosphere.OpenNeighbors)
+                    var neighborsToCheck = atmosphere.OpenNeighbors.ToList();
+
+                    foreach (var neighborGrid in neighborsToCheck)
                     {
                         var neighborRoom = GetCachedRoom(neighborGrid);
 
@@ -243,6 +239,12 @@ namespace BeefsRoomDefogger
                             roomsToCheck.Enqueue((neighborRoom, currentDepth + 1));
                         }
                     }
+                }
+                iterationsSinceYield++;
+                if (iterationsSinceYield >= 2) // how many rooms per yield now
+                {
+                    iterationsSinceYield = 0;
+                    yield return null;
                 }
             }
 
@@ -442,7 +444,7 @@ namespace BeefsRoomDefogger
         }
     }
 
-  public class FogControlPatcher : MonoBehaviour
+    public class FogControlPatcher : MonoBehaviour
     {
         private Room _lastPlayerRoom;
         private float _originalFogStart;
@@ -535,34 +537,34 @@ namespace BeefsRoomDefogger
                 return;
             }
 
-			BeefsRoomController.ScheduleRoomCheck(playerRoom, this);
+            BeefsRoomController.ScheduleRoomCheck(playerRoom, this);
 
-			var cachedState = BeefsRoomController.GetCachedRoomState(playerRoom.RoomId);
+            var cachedState = BeefsRoomController.GetCachedRoomState(playerRoom.RoomId);
 
-			BeefsRoomController.RoomVentingState ventingState = BeefsRoomController.RoomVentingState.Sealed;
-			float similarityRatio = 0.0f;
+            BeefsRoomController.RoomVentingState ventingState = BeefsRoomController.RoomVentingState.Sealed;
+            float similarityRatio = 0.0f;
 
-			if (cachedState != null)
-			{
-				if (!cachedState.Value.IsStale)
-				{
-					// use cache
-					ventingState = cachedState.Value.VentingState;
-					similarityRatio = cachedState.Value.SimilarityRatio;
-				}
-				else
-				{
-					// use cache but its stale
-					ventingState = cachedState.Value.VentingState;
-					similarityRatio = cachedState.Value.SimilarityRatio;
-				}
-			}
-			else
-			{
-				// no cache! sealed until otherwise proven
-				ventingState = BeefsRoomController.RoomVentingState.Sealed;
-				similarityRatio = 0.0f;
-			}
+            if (cachedState != null)
+            {
+                if (!cachedState.Value.IsStale)
+                {
+                    // use cache
+                    ventingState = cachedState.Value.VentingState;
+                    similarityRatio = cachedState.Value.SimilarityRatio;
+                }
+                else
+                {
+                    // use cache but its stale
+                    ventingState = cachedState.Value.VentingState;
+                    similarityRatio = cachedState.Value.SimilarityRatio;
+                }
+            }
+            else
+            {
+                // no cache! sealed until otherwise proven
+                ventingState = BeefsRoomController.RoomVentingState.Sealed;
+                similarityRatio = 0.0f;
+            }
 
             if (ventingState == BeefsRoomController.RoomVentingState.Venting)
             {
@@ -580,10 +582,10 @@ namespace BeefsRoomDefogger
                 float fogReductionMultiplier = CalculateFogMultiplier(similarityRatio);
                 _lastFogReductionMultiplier = fogReductionMultiplier;
 
-                if (!_isInSealedRoom || playerRoom != _lastPlayerRoom)
-                {
-                    BeefsRoomDefoggerPlugin.Log.LogInfo($"Room: {playerRoom?.RoomId}, Similarity: {similarityRatio:F2}, Multiplier: {fogReductionMultiplier:F2}");
-                }
+                // if (!_isInSealedRoom || playerRoom != _lastPlayerRoom)
+                // {
+                //     BeefsRoomDefoggerPlugin.Log.LogInfo($"Room: {playerRoom?.RoomId}, Similarity: {similarityRatio:F2}, Multiplier: {fogReductionMultiplier:F2}");
+                // }
 
                 _isInSealedRoom = true;
                 _lastPlayerRoom = playerRoom;

@@ -32,6 +32,11 @@ Configuration available through StationeersLaunchPad config or BepInEx config fi
 
 ## Changelog
 
+>### Version 1.1.2
+> - Fixed bug causing error in coroutine
+> - Stopped logging room updates
+> - Added scaling for the update popup
+
 >### Version 1.1.1
 > - Disabled storm particle changes (fog effect remains stays) in multiplayer until replication is resolved
 

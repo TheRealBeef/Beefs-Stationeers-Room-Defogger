@@ -31,14 +31,18 @@ namespace BeefsRoomDefogger
             public ConfigEntry<bool> Config;
         }
 
-        private readonly List<UpdatePopupItem> allPopups = new List<UpdatePopupItem>();
-        private Queue<UpdatePopupItem> popupQueue;
-        private UpdatePopupItem currentPopup;
+        private readonly List<UpdatePopupItem> _allPopups = new List<UpdatePopupItem>();
+        private Queue<UpdatePopupItem> _popupQueue;
+        private UpdatePopupItem _currentPopup;
 
-        private Rect popupRect;
-        private Vector2 scrollPos;
-        private bool showPopup = false;
-        private bool pendingShow = false;
+        private Rect _popupRect;
+        private Vector2 _scrollPos;
+        private bool _showPopup = false;
+        private bool _pendingShow = false;
+        private float _guiScale = 1.0f;
+        private int _lastScreenHeight = 0;
+        private int _lastScreenWidth = 0;
+        private bool _popupRectInitialized = false;
 
         private void Awake()
         {
@@ -72,19 +76,23 @@ namespace BeefsRoomDefogger
                 "- Overrides the storm fog effect now as well\n" +
                 "- Added sun dimming for storms (minus solar storm of course)\n\n" +
                 "Changelog v1.1.1:\n" +
-                "- Disabled storm particle changes (fog effect remains stays) in multiplayer until replication is resolved",
+                "- Disabled storm particle changes (fog effect remains stays) in multiplayer until replication is resolved\n" +
+                "Changelog v1.1.2:\n" +
+                "- Fixed bug causing error in coroutine" +
+                "- Stopped logging room updates" +
+                "- Added scaling for the update popup",
                 defaultSeen: false);
 
-            popupQueue = new Queue<UpdatePopupItem>();
-            foreach (var p in allPopups)
+            _popupQueue = new Queue<UpdatePopupItem>();
+            foreach (var p in _allPopups)
             {
                 if (!p.Config.Value)
                 {
-                    popupQueue.Enqueue(p);
+                    _popupQueue.Enqueue(p);
                 }
             }
 
-            pendingShow = popupQueue.Count > 0;
+            _pendingShow = _popupQueue.Count > 0;
 
             Log.LogInfo($"Plugin {PluginInfo.PLUGIN_NAME} is loaded!");
 
@@ -103,13 +111,13 @@ namespace BeefsRoomDefogger
                 Changelog = changelog,
                 Config = cfg
             };
-            allPopups.Add(item);
+            _allPopups.Add(item);
             return cfg;
         }
 
         private void Update()
         {
-            if (pendingShow && currentPopup == null && popupQueue != null && popupQueue.Count > 0 &&
+            if (_pendingShow && _currentPopup == null && _popupQueue != null && _popupQueue.Count > 0 &&
                 IsInGameWorld())
             {
                 if (popupDelay > 0f)
@@ -117,13 +125,20 @@ namespace BeefsRoomDefogger
                     popupDelay -= Time.deltaTime;
                     return;
                 }
-                currentPopup = popupQueue.Dequeue();
-                StartShowingPopup(currentPopup);
+                _currentPopup = _popupQueue.Dequeue();
+                StartShowingPopup(_currentPopup);
             }
 
-            if (showPopup && !IsInGameWorld())
+            if (_showPopup && !IsInGameWorld())
             {
-                showPopup = false;
+                _showPopup = false;
+            }
+
+            if (_popupRectInitialized && (Screen.height != _lastScreenHeight || Screen.width != _lastScreenWidth))
+            {
+                _popupRectInitialized = false;
+                _lastScreenHeight = Screen.height;
+                _lastScreenWidth = Screen.width;
             }
         }
 
@@ -138,20 +153,64 @@ namespace BeefsRoomDefogger
 
         private void StartShowingPopup(UpdatePopupItem item)
         {
-            float w = 520f, h = 320f;
-            popupRect = new Rect((Screen.width - w) / 2f, (Screen.height - h) / 2f, w, h);
-            scrollPos = Vector2.zero;
-            showPopup = true;
+            _popupRectInitialized = false;
+            _scrollPos = Vector2.zero;
+            _showPopup = true;
+        }
+
+        private void InitializePopupRect()
+        {
+            if (_popupRectInitialized) return;
+
+            float screenHeight = Screen.height;
+            float screenWidth = Screen.width;
+            float baseHeight = 1080f;
+
+            _guiScale = Mathf.Max(1.0f, screenHeight / baseHeight);
+
+            float baseWidth = 520f;
+            float basePopupHeight = 320f;
+
+            float scaledWidth = baseWidth * _guiScale;
+            float scaledHeight = basePopupHeight * _guiScale;
+
+            _popupRect = new Rect((screenWidth - scaledWidth) / 2f, (screenHeight - scaledHeight) / 2f, scaledWidth, scaledHeight);
+            _lastScreenHeight = (int)screenHeight;
+            _lastScreenWidth = (int)screenWidth;
+            _popupRectInitialized = true;
         }
 
         private void OnGUI()
         {
             Color oldColor = GUI.color;
-            if (!showPopup || currentPopup == null) return;
+            if (!_showPopup || _currentPopup == null) return;
             if (!IsInGameWorld()) return;
+
+            if (!_popupRectInitialized)
+                InitializePopupRect();
+
+            Matrix4x4 oldMatrix = GUI.matrix;
+            GUI.matrix = Matrix4x4.Scale(new Vector3(_guiScale, _guiScale, 1.0f));
+
+            Rect scaledRect = new Rect(
+                _popupRect.x / _guiScale,
+                _popupRect.y / _guiScale,
+                _popupRect.width / _guiScale,
+                _popupRect.height / _guiScale
+            );
+
             GUI.color = Color.white;
             GUI.backgroundColor = Color.red;
-            popupRect = GUI.ModalWindow(987987987, popupRect, DrawPopupWindow, currentPopup.Title);
+            scaledRect = GUI.ModalWindow(987987987, scaledRect, DrawPopupWindow, _currentPopup.Title);
+
+            _popupRect = new Rect(
+                scaledRect.x * _guiScale,
+                scaledRect.y * _guiScale,
+                scaledRect.width * _guiScale,
+                scaledRect.height * _guiScale
+            );
+
+            GUI.matrix = oldMatrix;
             GUI.color = oldColor;
         }
 
@@ -159,8 +218,10 @@ namespace BeefsRoomDefogger
         {
             GUILayout.BeginVertical();
             var wrapStyle = new GUIStyle(GUI.skin.label) { wordWrap = true };
-            scrollPos = GUILayout.BeginScrollView(scrollPos, GUILayout.Height(popupRect.height - 80));
-            GUILayout.Label(currentPopup.Changelog, wrapStyle, GUILayout.ExpandWidth(true));
+
+            float scaledHeight = (_popupRect.height / _guiScale) - 80;
+            _scrollPos = GUILayout.BeginScrollView(_scrollPos, GUILayout.Height(scaledHeight));
+            GUILayout.Label(_currentPopup.Changelog, wrapStyle, GUILayout.ExpandWidth(true));
             GUILayout.EndScrollView();
 
             GUILayout.Space(8);
@@ -169,22 +230,20 @@ namespace BeefsRoomDefogger
             GUILayout.FlexibleSpace();
             if (GUILayout.Button("OK - Don't show this update again", GUILayout.Height(30), GUILayout.Width(250)))
             {
-                currentPopup.Config.Value = true;
+                _currentPopup.Config.Value = true;
                 Config.Save();
-                if (popupQueue.Count > 0)
+                if (_popupQueue.Count > 0)
                 {
-                    currentPopup = popupQueue.Dequeue();
-                    scrollPos = Vector2.zero;
-                    float w = 520f, h = 320f;
-                    popupRect = new Rect((Screen.width - w) / 2f, (Screen.height - h) / 2f, w, h);
-                    showPopup = true;
+                    _currentPopup = _popupQueue.Dequeue();
+                    _scrollPos = Vector2.zero;
+                    _popupRectInitialized = false;
+                    _showPopup = true;
                 }
                 else
                 {
-                    currentPopup = null;
-                    showPopup = false;
-                    pendingShow = false;
-
+                    _currentPopup = null;
+                    _showPopup = false;
+                    _pendingShow = false;
                 }
             }
 
