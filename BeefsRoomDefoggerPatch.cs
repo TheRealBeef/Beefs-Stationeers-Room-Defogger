@@ -223,10 +223,20 @@ namespace BeefsRoomDefogger
                     {
                         var neighborRoom = GetCachedRoom(neighborGrid);
 
+                        // if (neighborRoom == null)
+                        // {
+                        //     foundVenting = true;
+                        //     ventingGrids.Add(grid.Value);
+                        // }
+
                         if (neighborRoom == null)
                         {
-                            foundVenting = true;
-                            ventingGrids.Add(grid.Value);
+                            var neighborAtmos = GetCachedAtmosphere(neighborGrid);
+                            if (neighborAtmos != null && neighborAtmos.IsGlobalAtmosphere)
+                            {
+                                foundVenting = true;
+                                ventingGrids.Add(grid.Value);
+                            }
                         }
 
                         if (neighborRoom != null &&

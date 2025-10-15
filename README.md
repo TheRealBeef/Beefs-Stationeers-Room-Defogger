@@ -32,6 +32,9 @@ Configuration available through StationeersLaunchPad config or BepInEx config fi
 
 ## Changelog
 
+>### Version 1.1.3
+> - Fix edge case where steel angled frame placed inside sealed room could cause it to be venting
+
 >### Version 1.1.2
 > - Fixed bug causing error in coroutine
 > - Stopped logging room updates
