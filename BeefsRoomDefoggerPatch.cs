@@ -16,6 +16,7 @@ using Unity.Mathematics;
 using Unity.Collections;
 using Weather;
 using System.Reflection;
+using Assets.Scripts.Objects;
 
 namespace BeefsRoomDefogger
 {
@@ -27,6 +28,8 @@ namespace BeefsRoomDefogger
         public static readonly Dictionary<long, RoomSealingInfo> RoomSealingCache = new Dictionary<long, RoomSealingInfo>();
         private static readonly Dictionary<Grid3, Atmosphere> TraversalAtmosphereCache = new Dictionary<Grid3, Atmosphere>();
         private static readonly Dictionary<Grid3, Room> TraversalRoomCache = new Dictionary<Grid3, Room>();
+        private static readonly Dictionary<Grid3, Structure> TraversalStructureCache = new Dictionary<Grid3, Structure>();
+
 
         private const int MaxTraversalDepth = 3; // How many room connections to check
         private const float CacheExpirySeconds = 600f; // 10min
@@ -133,6 +136,7 @@ namespace BeefsRoomDefogger
             RoomSealingCache.Clear();
             TraversalAtmosphereCache.Clear();
             TraversalRoomCache.Clear();
+            TraversalStructureCache.Clear();
             _sealingCheckInProgress = false;
         }
 
@@ -186,8 +190,10 @@ namespace BeefsRoomDefogger
 
             TraversalAtmosphereCache.Clear();
             TraversalRoomCache.Clear();
+            TraversalStructureCache.Clear();
 
             var visitedRooms = new HashSet<long>();
+            var checkedNeighborGrids = new HashSet<Grid3>();
             var roomsToCheck = new Queue<(Room room, int depth)>();
             var connectedRoomGroup = new HashSet<long>();
             var ventingGrids = new HashSet<int3>();
@@ -221,21 +227,39 @@ namespace BeefsRoomDefogger
 
                     foreach (var neighborGrid in neighborsToCheck)
                     {
-                        var neighborRoom = GetCachedRoom(neighborGrid);
+                        if (checkedNeighborGrids.Contains(neighborGrid))
+                            continue;
 
-                        // if (neighborRoom == null)
-                        // {
-                        //     foundVenting = true;
-                        //     ventingGrids.Add(grid.Value);
-                        // }
+                        checkedNeighborGrids.Add(neighborGrid);
+                        var neighborRoom = GetCachedRoom(neighborGrid);
 
                         if (neighborRoom == null)
                         {
-                            var neighborAtmos = GetCachedAtmosphere(neighborGrid);
-                            if (neighborAtmos != null && neighborAtmos.IsGlobalAtmosphere)
+                            var structure = GetCachedStructure(neighborGrid);
+
+                            if (structure == null)
                             {
                                 foundVenting = true;
                                 ventingGrids.Add(grid.Value);
+                            }
+                            else
+                            {
+                                var structureAtmos = GetCachedAtmosphere(neighborGrid);
+
+                                if (structureAtmos != null)
+                                {
+                                    foreach (var structureNeighbor in structureAtmos.OpenNeighbors)
+                                    {
+                                        var structNeighRoom = GetCachedRoom(structureNeighbor);
+
+                                        if (structNeighRoom == null && GetCachedStructure(structureNeighbor) == null)
+                                        {
+                                            foundVenting = true;
+                                            ventingGrids.Add(grid.Value);
+                                            break;
+                                        }
+                                    }
+                                }
                             }
                         }
 
@@ -295,6 +319,16 @@ namespace BeefsRoomDefogger
                 TraversalRoomCache[grid] = room;
             }
             return room;
+        }
+
+        private static Structure GetCachedStructure(Grid3 grid)
+        {
+            if (!TraversalStructureCache.TryGetValue(grid, out var structure))
+            {
+                structure = GridController.World?.GetStructure(grid);
+                TraversalStructureCache[grid] = structure;
+            }
+            return structure;
         }
 
         // This is basically the base-game method but adjusted a bit to use temp and output a float
