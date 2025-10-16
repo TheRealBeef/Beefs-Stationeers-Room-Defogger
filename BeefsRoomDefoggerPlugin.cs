@@ -16,7 +16,7 @@ namespace BeefsRoomDefogger
         public static ConfigEntry<float> IndoorFogBuffer;
         public static ConfigEntry<float> AdjustmentSpeed;
         public static ConfigEntry<float> ExtraFog;
-        public static ConfigEntry<bool> StormChanges;
+        // public static ConfigEntry<bool> StormChanges;
         public static ManualLogSource Log;
 
         // hidden configs for popups
@@ -65,8 +65,8 @@ namespace BeefsRoomDefogger
                     "Extra fog distance for outdoor atmospheric scattering. Higher = more foggy outside.",
                     new AcceptableValueRange<float>(0f, 20f)));
 
-            StormChanges = Config.Bind("General", "StormChanges", true,
-                "Dims the sun during storm and prevent storm particles from spawning inside terrain walled rooms.");
+            // StormChanges = Config.Bind("General", "StormChanges", true,
+            //     "Dims the sun during storm and prevent storm particles from spawning inside terrain walled rooms.");
 
             Update1_1_0_Popup = AddUpdatePopup(
                 "Update1_1_0_Popup",

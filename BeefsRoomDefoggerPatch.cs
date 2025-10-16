@@ -470,22 +470,22 @@ namespace BeefsRoomDefogger
             }
         }
 
-        public static HashSet<Room> GetRoomsFromStormGrid(Dictionary<int3, byte> stormRoomGrids)
-        {
-            var rooms = new HashSet<Room>();
-
-            foreach (var gridInt3 in stormRoomGrids.Keys)
-            {
-                var grid = new Grid3(gridInt3.x, gridInt3.y, gridInt3.z);
-                var room = RoomController.World?.GetRoom(grid);
-                if (room != null)
-                {
-                    rooms.Add(room);
-                }
-            }
-
-            return rooms;
-        }
+        // public static HashSet<Room> GetRoomsFromStormGrid(Dictionary<int3, byte> stormRoomGrids)
+        // {
+        //     var rooms = new HashSet<Room>();
+        //
+        //     foreach (var gridInt3 in stormRoomGrids.Keys)
+        //     {
+        //         var grid = new Grid3(gridInt3.x, gridInt3.y, gridInt3.z);
+        //         var room = RoomController.World?.GetRoom(grid);
+        //         if (room != null)
+        //         {
+        //             rooms.Add(room);
+        //         }
+        //     }
+        //
+        //     return rooms;
+        // }
     }
 
     public class FogControlPatcher : MonoBehaviour
@@ -871,472 +871,472 @@ namespace BeefsRoomDefogger
         }
     }
 
-    [HarmonyPatch(typeof(StormLocal), "UpdateStormField")]
-    public static class StormLocalRoomBlocker
-    {
-        private static FieldInfo _blockedAirGridsField = AccessTools.Field(typeof(StormLocal), "_blockedAirGrids");
-        private static FieldInfo _roomGridsField = AccessTools.Field(typeof(StormLocal), "_roomGrids");
-        private static float _lastStormForcedUpdate = 0f;
-        private const float ForceStormUpdateInterval = 5f;
-
-
-        private static HashSet<int3> _roomGridsToAdd = new HashSet<int3>();
-        private static HashSet<int3> _lastAddedGrids = new HashSet<int3>();
-        private static float _lastSealedRoomsUpdate = 0f;
-
-        [HarmonyPostfix]
-        public static void AddRoomGrids(StormLocal __instance)
-        {
-            try
-            {
-                if (!BeefsRoomDefoggerPlugin.EnableRoomDefogger.Value)
-                    return;
-
-                if (!BeefsRoomDefoggerPlugin.StormChanges.Value)
-                    return;
-
-                if (NetworkManager.IsActive)
-                {
-                    // BeefsRoomDefoggerPlugin.Log.LogInfo("Storm grid modifications disabled in multiplayer");
-                    return;
-                }
-
-                if (!__instance.IsStormActive)
-                {
-                    if (_roomGridsToAdd.Count > 0 || _lastAddedGrids.Count > 0)
-                    {
-                        var blockedAirGridsCleanup = _blockedAirGridsField.GetValue(__instance) as NativeHashMap<int3, byte>?;
-                        if (blockedAirGridsCleanup.HasValue && blockedAirGridsCleanup.Value.IsCreated)
-                        {
-                            var blockedAirGridsMapCleanup = blockedAirGridsCleanup.Value;
-
-                            foreach (var grid in _lastAddedGrids)
-                            {
-                                blockedAirGridsMapCleanup.Remove(grid);
-                            }
-
-                            BeefsRoomDefoggerPlugin.Log.LogInfo($"Removed {_lastAddedGrids.Count} grids on storm stop");
-                        }
-
-                        _roomGridsToAdd.Clear();
-                        _lastAddedGrids.Clear();
-                        _lastSealedRoomsUpdate = 0f;
-                        BeefsRoomController.ClearCache();
-                        __instance.MarkAsStale();
-                    }
-                    return;
-                }
-
-                if (Time.time - _lastSealedRoomsUpdate > 1f)
-                {
-                    bool roomStateChanged = UpdateSealedRoomsFromStormData(__instance);
-                    _lastSealedRoomsUpdate = Time.time;
-
-                    if (roomStateChanged)
-                    {
-                        __instance.MarkAsStale();
-                    }
-                }
-
-                if (Time.time - _lastStormForcedUpdate > ForceStormUpdateInterval)
-                {
-                    __instance.MarkAsStale();
-                    _lastStormForcedUpdate = Time.time;
-                }
-
-                if (_roomGridsToAdd.Count == 0)
-                    return;
-
-                var blockedAirGrids = _blockedAirGridsField.GetValue(__instance) as NativeHashMap<int3, byte>?;
-
-                if (!blockedAirGrids.HasValue || !blockedAirGrids.Value.IsCreated)
-                    return;
-
-                var blockedAirGridsMap = blockedAirGrids.Value;
-
-                foreach (var grid in _lastAddedGrids)
-                {
-                    if (!_roomGridsToAdd.Contains(grid))
-                    {
-                        blockedAirGridsMap.Remove(grid);
-                    }
-                }
-
-                var newAddedGrids = new HashSet<int3>();
-
-                foreach (var grid in _roomGridsToAdd)
-                {
-                    blockedAirGridsMap.TryAdd(grid, 0);
-                    newAddedGrids.Add(grid);
-                }
-
-                _lastAddedGrids = newAddedGrids;
-            }
-            catch (System.Exception ex)
-            {
-                BeefsRoomDefoggerPlugin.Log.LogError($"Error adding room grids: {ex.Message}\n{ex.StackTrace}");
-            }
-        }
-
-        private static bool UpdateSealedRoomsFromStormData(StormLocal stormLocal)
-        {
-            if (NetworkManager.IsActive)
-                return false;
-
-            var previousGrids = new HashSet<int3>(_roomGridsToAdd);
-            _roomGridsToAdd.Clear();
-
-            var roomGrids = _roomGridsField.GetValue(stormLocal) as NativeHashMap<int3, byte>?;
-
-            if (!roomGrids.HasValue || !roomGrids.Value.IsCreated)
-                return false;
-
-            var stormRoomGridsDict = new Dictionary<int3, byte>();
-            var keys = roomGrids.Value.GetKeyArray(Allocator.Temp);
-            try
-            {
-                foreach (var key in keys)
-                {
-                    stormRoomGridsDict[key] = roomGrids.Value[key];
-                }
-            }
-            finally
-            {
-                keys.Dispose();
-            }
-
-            var roomsInStormArea = BeefsRoomController.GetRoomsFromStormGrid(stormRoomGridsDict);
-
-            var fogController = UnityEngine.Object.FindObjectOfType<FogControlPatcher>();
-            if (fogController != null)
-            {
-                var roomsNeedingCheck = new HashSet<Room>();
-
-                foreach (var room in roomsInStormArea)
-                {
-                    var state = BeefsRoomController.GetCachedRoomState(room.RoomId);
-                    if (state == null || state.Value.IsStale || Time.time - state.Value.LastChecked > 5f)
-                    {
-                        roomsNeedingCheck.Add(room);
-                    }
-                }
-
-                if (roomsNeedingCheck.Count > 0)
-                {
-                    BeefsRoomController.ScheduleRoomCheck(roomsNeedingCheck, fogController);
-                }
-            }
-
-            UpdateSealedRoomsAndPunchHoleForVentingGrid(roomsInStormArea);
-
-            return !_roomGridsToAdd.SetEquals(previousGrids);
-        }
-
-        private static void UpdateSealedRoomsAndPunchHoleForVentingGrid(HashSet<Room> roomsInStormArea)
-        {
-            foreach (var room in roomsInStormArea)
-            {
-                var state = BeefsRoomController.GetCachedRoomState(room.RoomId);
-
-                if (state == null)
-                {
-                    var roomGridsToBlock = new HashSet<int3>();
-                    foreach (var gridWrapper in room.Grids)
-                        roomGridsToBlock.Add(gridWrapper.Value);
-
-                    ExpandRoom(roomGridsToBlock);
-                    _roomGridsToAdd.UnionWith(roomGridsToBlock);
-                    continue;
-                }
-
-                var roomGridsToBlockFinal = new HashSet<int3>();
-                foreach (var gridWrapper in room.Grids)
-                    roomGridsToBlockFinal.Add(gridWrapper.Value);
-
-                ExpandRoom(roomGridsToBlockFinal);
-                _roomGridsToAdd.UnionWith(roomGridsToBlockFinal);
-
-                foreach (var ventingGrid in state.Value.VentingGrids)
-                {
-                    PunchAHoleWhereItsVenting(ventingGrid, _roomGridsToAdd);
-                }
-
-                // if (state.Value.VentingState == BeefsRoomController.RoomVentingState.Sealed)
-                // {
-                //     foreach (var gridWrapper in room.Grids)
-                //     {
-                //         _roomGridsToAdd.Add(gridWrapper.Value);
-                //     }
-                // }
-            }
-        }
-
-        // private static void UpdateSealedRooms(HashSet<Room> roomsInStormArea)
-        // {
-        //     var sealedRoomGrids = new HashSet<int3>();
-        //
-        //     foreach (var room in roomsInStormArea)
-        //     {
-        //         var state = BeefsRoomController.GetCachedRoomState(room.RoomId);
-        //
-        //         if (state == null || state.Value.VentingState == BeefsRoomController.RoomVentingState.Sealed)
-        //         {
-        //             foreach (var gridWrapper in room.Grids)
-        //                 sealedRoomGrids.Add(gridWrapper.Value);
-        //         }
-        //     }
-        //
-        //     ExpandRoom(sealedRoomGrids);
-        //     _roomGridsToAdd.UnionWith(sealedRoomGrids);
-        // }
-
-        private static void ExpandRoom(HashSet<int3> roomGrids)
-        {
-            int expansionStep = 20;
-            int gridsToExpand = 1;
-
-            var expandedGrids = new HashSet<int3>();
-            foreach (var grid in roomGrids.ToList())
-            {
-                for (int dx = -gridsToExpand; dx <= gridsToExpand; dx++)
-                {
-                    for (int dy = -gridsToExpand; dy <= gridsToExpand; dy++)
-                    {
-                        for (int dz = -gridsToExpand; dz <= gridsToExpand; dz++)
-                        {
-                            if (dx == 0 && dy == 0 && dz == 0)
-                                continue;
-
-                            expandedGrids.Add(new int3(
-                                grid.x + dx * expansionStep,
-                                grid.y + dy * expansionStep,
-                                grid.z + dz * expansionStep
-                            ));
-                        }
-                    }
-                }
-            }
-
-            roomGrids.UnionWith(expandedGrids);
-        }
-
-        private static void PunchAHoleWhereItsVenting(int3 ventingGrid, HashSet<int3> blockedGrids)
-        {
-            int expansionStep = 20;
-            int gridsToExpand = 1;
-
-            for (int dx = -gridsToExpand; dx <= gridsToExpand; dx++)
-            {
-                for (int dy = -gridsToExpand; dy <= gridsToExpand; dy++)
-                {
-                    for (int dz = -gridsToExpand; dz <= gridsToExpand; dz++)
-                    {
-                        var openingGrid = new int3(
-                            ventingGrid.x + dx * expansionStep,
-                            ventingGrid.y + dy * expansionStep,
-                            ventingGrid.z + dz * expansionStep
-                        );
-
-                        blockedGrids.Remove(openingGrid);
-                        _roomGridsToAdd.Remove(openingGrid);
-                    }
-                }
-            }
-        }
-    }
-
-    [HarmonyPatch(typeof(StormLocal), "Update")]
-    public static class StormLocalFogPatcher
-    {
-        private static float _targetStormFogStart = float.MinValue;
-        private static float _targetStormFogEnd = float.MinValue;
-        private static float _currentStormFogStart = float.MinValue;
-        private static float _currentStormFogEnd = float.MinValue;
-        private static bool _isInitialized = false;
-
-        private const float FogOffset = -5f;
-
-        [HarmonyPostfix]
-        public static void UpdatePostfix(StormLocal __instance)
-        {
-            try
-            {
-                if (!BeefsRoomDefoggerPlugin.EnableRoomDefogger.Value || !__instance.IsStormActive || WeatherManager.CurrentWeatherEvent?.Fog == null)
-                    return;
-
-                if (!BeefsRoomDefoggerPlugin.StormChanges.Value)
-                    return;
-
-                if (WorldManager.Instance?.WorldSun?.TargetLight == null)
-                {
-                    _isInitialized = false;
-                    return;
-                }
-
-                if (!_isInitialized)
-                {
-                    _currentStormFogStart = RenderSettings.fogStartDistance;
-                    _currentStormFogEnd = RenderSettings.fogEndDistance;
-                    _targetStormFogStart = _currentStormFogStart;
-                    _targetStormFogEnd = _currentStormFogEnd;
-                    _isInitialized = true;
-                }
-
-                float roomBoundaryDistance = FogControlPatcher.GetRoomBoundaryDistance();
-                bool isPlayerInSealedRoom = FogControlPatcher.IsPlayerInSealedRoom();
-
-                float newTargetStart, newTargetEnd;
-                if (isPlayerInSealedRoom && roomBoundaryDistance > 0f)
-                {
-                    newTargetStart = roomBoundaryDistance + WeatherManager.CurrentWeatherEvent.Fog.StartDistance;
-                    newTargetEnd = roomBoundaryDistance + WeatherManager.CurrentWeatherEvent.Fog.EndDistance;
-                }
-                else
-                {
-                    newTargetStart = Mathf.Max(0f, WeatherManager.CurrentWeatherEvent.Fog.StartDistance + FogOffset);
-                    newTargetEnd = Mathf.Max(0f, WeatherManager.CurrentWeatherEvent.Fog.EndDistance + FogOffset);
-                }
-
-                if (Mathf.Abs(newTargetStart - _targetStormFogStart) > 0.1f || Mathf.Abs(newTargetEnd - _targetStormFogEnd) > 0.1f)
-                {
-                    _targetStormFogStart = newTargetStart;
-                    _targetStormFogEnd = newTargetEnd;
-                }
-
-                float maxMove = BeefsRoomDefoggerPlugin.AdjustmentSpeed.Value * Time.deltaTime;
-                _currentStormFogStart = Mathf.MoveTowards(_currentStormFogStart, _targetStormFogStart, maxMove);
-                _currentStormFogEnd = Mathf.MoveTowards(_currentStormFogEnd, _targetStormFogEnd, maxMove);
-
-                if (Mathf.Abs(RenderSettings.fogStartDistance - _currentStormFogStart) > 0.1f ||
-                    Mathf.Abs(RenderSettings.fogEndDistance - _currentStormFogEnd) > 0.1f)
-                {
-                    RenderSettings.fogStartDistance = _currentStormFogStart;
-                    RenderSettings.fogEndDistance = _currentStormFogEnd;
-                }
-            }
-            catch (System.Exception ex)
-            {
-                BeefsRoomDefoggerPlugin.Log.LogError($"Error in storm fog update: {ex.Message}");
-            }
-        }
-    }
-
-    [HarmonyPatch(typeof(StormLocal), "Update")]
-    public static class StormLensFlareDimmer
-    {
-        private static Component _sunFlares = null;
-        private static PropertyInfo _opacityProperty = null;
-        // private static PropertyInfo _dampingFactorProperty = null;
-        private static float _originalOpacity = 1f;
-        // private static float _originalDampingFactor = 0.1f;
-        private static bool _isInitialized = false;
-
-        [HarmonyPostfix]
-        public static void DimLensFlaresDuringStorm(StormLocal __instance)
-        {
-            try
-            {
-                if (!BeefsRoomDefoggerPlugin.EnableRoomDefogger.Value)
-                    return;
-
-                if (!BeefsRoomDefoggerPlugin.StormChanges.Value)
-                    return;
-
-                if (WeatherManager.CurrentWeatherEvent != null &&
-                    WeatherManager.CurrentWeatherEvent.Id == "SolarStorm")
-                    return;
-
-
-                if (WorldManager.Instance?.WorldSun?.TargetLight == null)
-                {
-                    if (_isInitialized)
-                    {
-                        RestoreLensFlares();
-                    }
-                    return;
-                }
-
-                if (!_isInitialized)
-                {
-                    InitializeLensFlares();
-                }
-
-                if (_sunFlares == null || _opacityProperty == null) // || _dampingFactorProperty == null)
-                {
-                    return;
-                }
-
-                if (__instance.IsStormActive)
-                {
-                    _opacityProperty.SetValue(_sunFlares, _originalOpacity * 0.05f);
-                    // _dampingFactorProperty.SetValue(_sunFlares, 0.01f);
-                }
-                else
-                {
-                    _opacityProperty.SetValue(_sunFlares, _originalOpacity);
-                    // _dampingFactorProperty.SetValue(_sunFlares, _originalDampingFactor);
-                }
-            }
-            catch (System.Exception ex)
-            {
-                BeefsRoomDefoggerPlugin.Log.LogError($"Error! The sun cannot be dimmed it's too powerful: {ex.Message}");
-            }
-        }
-
-        private static void InitializeLensFlares()
-        {
-            try
-            {
-                if (RenderSettings.sun != null)
-                {
-                    var allComponents = RenderSettings.sun.GetComponents<Component>();
-                    foreach (var component in allComponents)
-                    {
-                        if (component.GetType().Name == "EasyFlares")
-                        {
-                            _sunFlares = component;
-                            break;
-                        }
-                    }
-
-                    if (_sunFlares != null)
-                    {
-                        _opacityProperty = _sunFlares.GetType().GetProperty("Opacity");
-                        // _dampingFactorProperty = _sunFlares.GetType().GetProperty("DampingFactor");
-
-                        if (_opacityProperty != null) // && _dampingFactorProperty != null)
-                        {
-                            _originalOpacity = (float)_opacityProperty.GetValue(_sunFlares);
-                            // _originalDampingFactor = (float)_dampingFactorProperty.GetValue(_sunFlares);
-                            _isInitialized = true;
-                        }
-                    }
-                }
-            }
-            catch (System.Exception ex)
-            {
-                BeefsRoomDefoggerPlugin.Log.LogError($"Error initializing sun lens flare control: {ex.Message}");
-            }
-        }
-
-        private static void RestoreLensFlares()
-        {
-            try
-            {
-                if (_sunFlares != null && _opacityProperty != null) // && _dampingFactorProperty != null)
-                {
-                    _opacityProperty.SetValue(_sunFlares, _originalOpacity);
-                    // _dampingFactorProperty.SetValue(_sunFlares, _originalDampingFactor);
-                }
-                _isInitialized = false;
-                _sunFlares = null;
-                _opacityProperty = null;
-                // _dampingFactorProperty = null;
-            }
-            catch (System.Exception ex)
-            {
-                BeefsRoomDefoggerPlugin.Log.LogError($"Error restoring lens flares: {ex.Message}");
-            }
-        }
-    }
+    // [HarmonyPatch(typeof(StormLocal), "UpdateStormField")]
+    // public static class StormLocalRoomBlocker
+    // {
+    //     private static FieldInfo _blockedAirGridsField = AccessTools.Field(typeof(StormLocal), "_blockedAirGrids");
+    //     private static FieldInfo _roomGridsField = AccessTools.Field(typeof(StormLocal), "_roomGrids");
+    //     private static float _lastStormForcedUpdate = 0f;
+    //     private const float ForceStormUpdateInterval = 5f;
+    //
+    //
+    //     private static HashSet<int3> _roomGridsToAdd = new HashSet<int3>();
+    //     private static HashSet<int3> _lastAddedGrids = new HashSet<int3>();
+    //     private static float _lastSealedRoomsUpdate = 0f;
+    //
+    //     [HarmonyPostfix]
+    //     public static void AddRoomGrids(StormLocal __instance)
+    //     {
+    //         try
+    //         {
+    //             if (!BeefsRoomDefoggerPlugin.EnableRoomDefogger.Value)
+    //                 return;
+    //
+    //             if (!BeefsRoomDefoggerPlugin.StormChanges.Value)
+    //                 return;
+    //
+    //             if (NetworkManager.IsActive)
+    //             {
+    //                 // BeefsRoomDefoggerPlugin.Log.LogInfo("Storm grid modifications disabled in multiplayer");
+    //                 return;
+    //             }
+    //
+    //             if (!__instance.IsStormActive)
+    //             {
+    //                 if (_roomGridsToAdd.Count > 0 || _lastAddedGrids.Count > 0)
+    //                 {
+    //                     var blockedAirGridsCleanup = _blockedAirGridsField.GetValue(__instance) as NativeHashMap<int3, byte>?;
+    //                     if (blockedAirGridsCleanup.HasValue && blockedAirGridsCleanup.Value.IsCreated)
+    //                     {
+    //                         var blockedAirGridsMapCleanup = blockedAirGridsCleanup.Value;
+    //
+    //                         foreach (var grid in _lastAddedGrids)
+    //                         {
+    //                             blockedAirGridsMapCleanup.Remove(grid);
+    //                         }
+    //
+    //                         BeefsRoomDefoggerPlugin.Log.LogInfo($"Removed {_lastAddedGrids.Count} grids on storm stop");
+    //                     }
+    //
+    //                     _roomGridsToAdd.Clear();
+    //                     _lastAddedGrids.Clear();
+    //                     _lastSealedRoomsUpdate = 0f;
+    //                     BeefsRoomController.ClearCache();
+    //                     __instance.MarkAsStale();
+    //                 }
+    //                 return;
+    //             }
+    //
+    //             if (Time.time - _lastSealedRoomsUpdate > 1f)
+    //             {
+    //                 bool roomStateChanged = UpdateSealedRoomsFromStormData(__instance);
+    //                 _lastSealedRoomsUpdate = Time.time;
+    //
+    //                 if (roomStateChanged)
+    //                 {
+    //                     __instance.MarkAsStale();
+    //                 }
+    //             }
+    //
+    //             if (Time.time - _lastStormForcedUpdate > ForceStormUpdateInterval)
+    //             {
+    //                 __instance.MarkAsStale();
+    //                 _lastStormForcedUpdate = Time.time;
+    //             }
+    //
+    //             if (_roomGridsToAdd.Count == 0)
+    //                 return;
+    //
+    //             var blockedAirGrids = _blockedAirGridsField.GetValue(__instance) as NativeHashMap<int3, byte>?;
+    //
+    //             if (!blockedAirGrids.HasValue || !blockedAirGrids.Value.IsCreated)
+    //                 return;
+    //
+    //             var blockedAirGridsMap = blockedAirGrids.Value;
+    //
+    //             foreach (var grid in _lastAddedGrids)
+    //             {
+    //                 if (!_roomGridsToAdd.Contains(grid))
+    //                 {
+    //                     blockedAirGridsMap.Remove(grid);
+    //                 }
+    //             }
+    //
+    //             var newAddedGrids = new HashSet<int3>();
+    //
+    //             foreach (var grid in _roomGridsToAdd)
+    //             {
+    //                 blockedAirGridsMap.TryAdd(grid, 0);
+    //                 newAddedGrids.Add(grid);
+    //             }
+    //
+    //             _lastAddedGrids = newAddedGrids;
+    //         }
+    //         catch (System.Exception ex)
+    //         {
+    //             BeefsRoomDefoggerPlugin.Log.LogError($"Error adding room grids: {ex.Message}\n{ex.StackTrace}");
+    //         }
+    //     }
+    //
+    //     private static bool UpdateSealedRoomsFromStormData(StormLocal stormLocal)
+    //     {
+    //         if (NetworkManager.IsActive)
+    //             return false;
+    //
+    //         var previousGrids = new HashSet<int3>(_roomGridsToAdd);
+    //         _roomGridsToAdd.Clear();
+    //
+    //         var roomGrids = _roomGridsField.GetValue(stormLocal) as NativeHashMap<int3, byte>?;
+    //
+    //         if (!roomGrids.HasValue || !roomGrids.Value.IsCreated)
+    //             return false;
+    //
+    //         var stormRoomGridsDict = new Dictionary<int3, byte>();
+    //         var keys = roomGrids.Value.GetKeyArray(Allocator.Temp);
+    //         try
+    //         {
+    //             foreach (var key in keys)
+    //             {
+    //                 stormRoomGridsDict[key] = roomGrids.Value[key];
+    //             }
+    //         }
+    //         finally
+    //         {
+    //             keys.Dispose();
+    //         }
+    //
+    //         var roomsInStormArea = BeefsRoomController.GetRoomsFromStormGrid(stormRoomGridsDict);
+    //
+    //         var fogController = UnityEngine.Object.FindObjectOfType<FogControlPatcher>();
+    //         if (fogController != null)
+    //         {
+    //             var roomsNeedingCheck = new HashSet<Room>();
+    //
+    //             foreach (var room in roomsInStormArea)
+    //             {
+    //                 var state = BeefsRoomController.GetCachedRoomState(room.RoomId);
+    //                 if (state == null || state.Value.IsStale || Time.time - state.Value.LastChecked > 5f)
+    //                 {
+    //                     roomsNeedingCheck.Add(room);
+    //                 }
+    //             }
+    //
+    //             if (roomsNeedingCheck.Count > 0)
+    //             {
+    //                 BeefsRoomController.ScheduleRoomCheck(roomsNeedingCheck, fogController);
+    //             }
+    //         }
+    //
+    //         UpdateSealedRoomsAndPunchHoleForVentingGrid(roomsInStormArea);
+    //
+    //         return !_roomGridsToAdd.SetEquals(previousGrids);
+    //     }
+    //
+    //     private static void UpdateSealedRoomsAndPunchHoleForVentingGrid(HashSet<Room> roomsInStormArea)
+    //     {
+    //         foreach (var room in roomsInStormArea)
+    //         {
+    //             var state = BeefsRoomController.GetCachedRoomState(room.RoomId);
+    //
+    //             if (state == null)
+    //             {
+    //                 var roomGridsToBlock = new HashSet<int3>();
+    //                 foreach (var gridWrapper in room.Grids)
+    //                     roomGridsToBlock.Add(gridWrapper.Value);
+    //
+    //                 ExpandRoom(roomGridsToBlock);
+    //                 _roomGridsToAdd.UnionWith(roomGridsToBlock);
+    //                 continue;
+    //             }
+    //
+    //             var roomGridsToBlockFinal = new HashSet<int3>();
+    //             foreach (var gridWrapper in room.Grids)
+    //                 roomGridsToBlockFinal.Add(gridWrapper.Value);
+    //
+    //             ExpandRoom(roomGridsToBlockFinal);
+    //             _roomGridsToAdd.UnionWith(roomGridsToBlockFinal);
+    //
+    //             foreach (var ventingGrid in state.Value.VentingGrids)
+    //             {
+    //                 PunchAHoleWhereItsVenting(ventingGrid, _roomGridsToAdd);
+    //             }
+    //
+    //             // if (state.Value.VentingState == BeefsRoomController.RoomVentingState.Sealed)
+    //             // {
+    //             //     foreach (var gridWrapper in room.Grids)
+    //             //     {
+    //             //         _roomGridsToAdd.Add(gridWrapper.Value);
+    //             //     }
+    //             // }
+    //         }
+    //     }
+    //
+    //     // private static void UpdateSealedRooms(HashSet<Room> roomsInStormArea)
+    //     // {
+    //     //     var sealedRoomGrids = new HashSet<int3>();
+    //     //
+    //     //     foreach (var room in roomsInStormArea)
+    //     //     {
+    //     //         var state = BeefsRoomController.GetCachedRoomState(room.RoomId);
+    //     //
+    //     //         if (state == null || state.Value.VentingState == BeefsRoomController.RoomVentingState.Sealed)
+    //     //         {
+    //     //             foreach (var gridWrapper in room.Grids)
+    //     //                 sealedRoomGrids.Add(gridWrapper.Value);
+    //     //         }
+    //     //     }
+    //     //
+    //     //     ExpandRoom(sealedRoomGrids);
+    //     //     _roomGridsToAdd.UnionWith(sealedRoomGrids);
+    //     // }
+    //
+    //     private static void ExpandRoom(HashSet<int3> roomGrids)
+    //     {
+    //         int expansionStep = 20;
+    //         int gridsToExpand = 1;
+    //
+    //         var expandedGrids = new HashSet<int3>();
+    //         foreach (var grid in roomGrids.ToList())
+    //         {
+    //             for (int dx = -gridsToExpand; dx <= gridsToExpand; dx++)
+    //             {
+    //                 for (int dy = -gridsToExpand; dy <= gridsToExpand; dy++)
+    //                 {
+    //                     for (int dz = -gridsToExpand; dz <= gridsToExpand; dz++)
+    //                     {
+    //                         if (dx == 0 && dy == 0 && dz == 0)
+    //                             continue;
+    //
+    //                         expandedGrids.Add(new int3(
+    //                             grid.x + dx * expansionStep,
+    //                             grid.y + dy * expansionStep,
+    //                             grid.z + dz * expansionStep
+    //                         ));
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //
+    //         roomGrids.UnionWith(expandedGrids);
+    //     }
+    //
+    //     private static void PunchAHoleWhereItsVenting(int3 ventingGrid, HashSet<int3> blockedGrids)
+    //     {
+    //         int expansionStep = 20;
+    //         int gridsToExpand = 1;
+    //
+    //         for (int dx = -gridsToExpand; dx <= gridsToExpand; dx++)
+    //         {
+    //             for (int dy = -gridsToExpand; dy <= gridsToExpand; dy++)
+    //             {
+    //                 for (int dz = -gridsToExpand; dz <= gridsToExpand; dz++)
+    //                 {
+    //                     var openingGrid = new int3(
+    //                         ventingGrid.x + dx * expansionStep,
+    //                         ventingGrid.y + dy * expansionStep,
+    //                         ventingGrid.z + dz * expansionStep
+    //                     );
+    //
+    //                     blockedGrids.Remove(openingGrid);
+    //                     _roomGridsToAdd.Remove(openingGrid);
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
+    //
+    // [HarmonyPatch(typeof(StormLocal), "Update")]
+    // public static class StormLocalFogPatcher
+    // {
+    //     private static float _targetStormFogStart = float.MinValue;
+    //     private static float _targetStormFogEnd = float.MinValue;
+    //     private static float _currentStormFogStart = float.MinValue;
+    //     private static float _currentStormFogEnd = float.MinValue;
+    //     private static bool _isInitialized = false;
+    //
+    //     private const float FogOffset = -5f;
+    //
+    //     [HarmonyPostfix]
+    //     public static void UpdatePostfix(StormLocal __instance)
+    //     {
+    //         try
+    //         {
+    //             if (!BeefsRoomDefoggerPlugin.EnableRoomDefogger.Value || !__instance.IsStormActive || WeatherManager.CurrentWeatherEvent?.Fog == null)
+    //                 return;
+    //
+    //             if (!BeefsRoomDefoggerPlugin.StormChanges.Value)
+    //                 return;
+    //
+    //             if (WorldManager.Instance?.WorldSun?.TargetLight == null)
+    //             {
+    //                 _isInitialized = false;
+    //                 return;
+    //             }
+    //
+    //             if (!_isInitialized)
+    //             {
+    //                 _currentStormFogStart = RenderSettings.fogStartDistance;
+    //                 _currentStormFogEnd = RenderSettings.fogEndDistance;
+    //                 _targetStormFogStart = _currentStormFogStart;
+    //                 _targetStormFogEnd = _currentStormFogEnd;
+    //                 _isInitialized = true;
+    //             }
+    //
+    //             float roomBoundaryDistance = FogControlPatcher.GetRoomBoundaryDistance();
+    //             bool isPlayerInSealedRoom = FogControlPatcher.IsPlayerInSealedRoom();
+    //
+    //             float newTargetStart, newTargetEnd;
+    //             if (isPlayerInSealedRoom && roomBoundaryDistance > 0f)
+    //             {
+    //                 newTargetStart = roomBoundaryDistance + WeatherManager.CurrentWeatherEvent.Fog.StartDistance;
+    //                 newTargetEnd = roomBoundaryDistance + WeatherManager.CurrentWeatherEvent.Fog.EndDistance;
+    //             }
+    //             else
+    //             {
+    //                 newTargetStart = Mathf.Max(0f, WeatherManager.CurrentWeatherEvent.Fog.StartDistance + FogOffset);
+    //                 newTargetEnd = Mathf.Max(0f, WeatherManager.CurrentWeatherEvent.Fog.EndDistance + FogOffset);
+    //             }
+    //
+    //             if (Mathf.Abs(newTargetStart - _targetStormFogStart) > 0.1f || Mathf.Abs(newTargetEnd - _targetStormFogEnd) > 0.1f)
+    //             {
+    //                 _targetStormFogStart = newTargetStart;
+    //                 _targetStormFogEnd = newTargetEnd;
+    //             }
+    //
+    //             float maxMove = BeefsRoomDefoggerPlugin.AdjustmentSpeed.Value * Time.deltaTime;
+    //             _currentStormFogStart = Mathf.MoveTowards(_currentStormFogStart, _targetStormFogStart, maxMove);
+    //             _currentStormFogEnd = Mathf.MoveTowards(_currentStormFogEnd, _targetStormFogEnd, maxMove);
+    //
+    //             if (Mathf.Abs(RenderSettings.fogStartDistance - _currentStormFogStart) > 0.1f ||
+    //                 Mathf.Abs(RenderSettings.fogEndDistance - _currentStormFogEnd) > 0.1f)
+    //             {
+    //                 RenderSettings.fogStartDistance = _currentStormFogStart;
+    //                 RenderSettings.fogEndDistance = _currentStormFogEnd;
+    //             }
+    //         }
+    //         catch (System.Exception ex)
+    //         {
+    //             BeefsRoomDefoggerPlugin.Log.LogError($"Error in storm fog update: {ex.Message}");
+    //         }
+    //     }
+    // }
+    //
+    // [HarmonyPatch(typeof(StormLocal), "Update")]
+    // public static class StormLensFlareDimmer
+    // {
+    //     private static Component _sunFlares = null;
+    //     private static PropertyInfo _opacityProperty = null;
+    //     // private static PropertyInfo _dampingFactorProperty = null;
+    //     private static float _originalOpacity = 1f;
+    //     // private static float _originalDampingFactor = 0.1f;
+    //     private static bool _isInitialized = false;
+    //
+    //     [HarmonyPostfix]
+    //     public static void DimLensFlaresDuringStorm(StormLocal __instance)
+    //     {
+    //         try
+    //         {
+    //             if (!BeefsRoomDefoggerPlugin.EnableRoomDefogger.Value)
+    //                 return;
+    //
+    //             if (!BeefsRoomDefoggerPlugin.StormChanges.Value)
+    //                 return;
+    //
+    //             if (WeatherManager.CurrentWeatherEvent != null &&
+    //                 WeatherManager.CurrentWeatherEvent.Id == "SolarStorm")
+    //                 return;
+    //
+    //
+    //             if (WorldManager.Instance?.WorldSun?.TargetLight == null)
+    //             {
+    //                 if (_isInitialized)
+    //                 {
+    //                     RestoreLensFlares();
+    //                 }
+    //                 return;
+    //             }
+    //
+    //             if (!_isInitialized)
+    //             {
+    //                 InitializeLensFlares();
+    //             }
+    //
+    //             if (_sunFlares == null || _opacityProperty == null) // || _dampingFactorProperty == null)
+    //             {
+    //                 return;
+    //             }
+    //
+    //             if (__instance.IsStormActive)
+    //             {
+    //                 _opacityProperty.SetValue(_sunFlares, _originalOpacity * 0.05f);
+    //                 // _dampingFactorProperty.SetValue(_sunFlares, 0.01f);
+    //             }
+    //             else
+    //             {
+    //                 _opacityProperty.SetValue(_sunFlares, _originalOpacity);
+    //                 // _dampingFactorProperty.SetValue(_sunFlares, _originalDampingFactor);
+    //             }
+    //         }
+    //         catch (System.Exception ex)
+    //         {
+    //             BeefsRoomDefoggerPlugin.Log.LogError($"Error! The sun cannot be dimmed it's too powerful: {ex.Message}");
+    //         }
+    //     }
+    //
+    //     private static void InitializeLensFlares()
+    //     {
+    //         try
+    //         {
+    //             if (RenderSettings.sun != null)
+    //             {
+    //                 var allComponents = RenderSettings.sun.GetComponents<Component>();
+    //                 foreach (var component in allComponents)
+    //                 {
+    //                     if (component.GetType().Name == "EasyFlares")
+    //                     {
+    //                         _sunFlares = component;
+    //                         break;
+    //                     }
+    //                 }
+    //
+    //                 if (_sunFlares != null)
+    //                 {
+    //                     _opacityProperty = _sunFlares.GetType().GetProperty("Opacity");
+    //                     // _dampingFactorProperty = _sunFlares.GetType().GetProperty("DampingFactor");
+    //
+    //                     if (_opacityProperty != null) // && _dampingFactorProperty != null)
+    //                     {
+    //                         _originalOpacity = (float)_opacityProperty.GetValue(_sunFlares);
+    //                         // _originalDampingFactor = (float)_dampingFactorProperty.GetValue(_sunFlares);
+    //                         _isInitialized = true;
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //         catch (System.Exception ex)
+    //         {
+    //             BeefsRoomDefoggerPlugin.Log.LogError($"Error initializing sun lens flare control: {ex.Message}");
+    //         }
+    //     }
+    //
+    //     private static void RestoreLensFlares()
+    //     {
+    //         try
+    //         {
+    //             if (_sunFlares != null && _opacityProperty != null) // && _dampingFactorProperty != null)
+    //             {
+    //                 _opacityProperty.SetValue(_sunFlares, _originalOpacity);
+    //                 // _dampingFactorProperty.SetValue(_sunFlares, _originalDampingFactor);
+    //             }
+    //             _isInitialized = false;
+    //             _sunFlares = null;
+    //             _opacityProperty = null;
+    //             // _dampingFactorProperty = null;
+    //         }
+    //         catch (System.Exception ex)
+    //         {
+    //             BeefsRoomDefoggerPlugin.Log.LogError($"Error restoring lens flares: {ex.Message}");
+    //         }
+    //     }
+    // }
 }

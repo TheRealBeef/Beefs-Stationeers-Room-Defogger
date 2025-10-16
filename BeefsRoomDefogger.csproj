@@ -3,7 +3,7 @@
         <TargetFramework>netstandard2.1</TargetFramework>
         <AssemblyTitle>BeefsRoomDefogger</AssemblyTitle>
         <Product>BeefsRoomDefogger</Product>
-        <Version>1.1.3</Version>
+        <Version>1.1.4</Version>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <LangVersion>latest</LangVersion>
         <RootNamespace>BeefsRoomDefogger</RootNamespace>

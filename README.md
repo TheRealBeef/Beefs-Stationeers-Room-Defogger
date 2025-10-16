@@ -12,8 +12,12 @@ Removes fog and atmospheric scattering in sealed, pressurized rooms while mainta
 - Fog transitions based on room sealing and atmospheric composition
 - Distinguishes between sealed rooms, venting rooms, and outdoor areas
 - Configurable fog buffer distances and adjustment speeds
-- Improves storm fog and particle effects for terrain-walled rooms
-- Dims the sun during appropriate storms
+
+
+- [REMOVED] Improves storm fog and particle effects for terrain-walled rooms
+  - This is likely no longer needed as the improved storm system shouldn't have these issues
+- [REMOVED] Dims the sun during appropriate storms
+  - Unsure if required, will check and replace if necessary
 
 ## Requirements
 
@@ -31,6 +35,8 @@ See: [https://github.com/StationeersLaunchPad/StationeersLaunchPad](https://gith
 Configuration available through StationeersLaunchPad config or BepInEx config files.
 
 ## Changelog
+>### Version 1.1.4
+> - Remove storm changes as they are fully depreciated following update to storm system on stable branch
 
 >### Version 1.1.3
 > - Fix edge case where steel angled frame placed inside sealed room could cause it to be venting
