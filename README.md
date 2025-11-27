@@ -35,6 +35,9 @@ See: [https://github.com/StationeersLaunchPad/StationeersLaunchPad](https://gith
 Configuration available through StationeersLaunchPad config or BepInEx config files.
 
 ## Changelog
+>### Version 1.1.5
+> - Revert the changes introduced in v1.1.0 for disabling in multiplayer
+
 >### Version 1.1.4
 > - Remove storm changes as they are fully depreciated following update to storm system on stable branch
 

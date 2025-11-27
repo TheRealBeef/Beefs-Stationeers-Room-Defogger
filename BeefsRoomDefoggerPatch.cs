@@ -774,11 +774,11 @@ namespace BeefsRoomDefogger
         {
             try
             {
-                if (NetworkManager.NetworkRole == NetworkRole.Server)
-                {
-                    BeefsRoomDefoggerPlugin.Log.LogInfo("Skipping defogger on server");
-                    return;
-                }
+                // if (NetworkManager.NetworkRole == NetworkRole.Server)
+                // {
+                //     BeefsRoomDefoggerPlugin.Log.LogInfo("Skipping defogger on server");
+                //     return;
+                // }
 
                 var fogController = __instance.gameObject.GetComponent<FogControlPatcher>();
                 if (fogController == null)
@@ -812,8 +812,8 @@ namespace BeefsRoomDefogger
         {
             try
             {
-                if (!BeefsRoomDefoggerPlugin.EnableRoomDefogger.Value || NetworkManager.NetworkRole == NetworkRole.Server)
-                    return;
+                // if (!BeefsRoomDefoggerPlugin.EnableRoomDefogger.Value || NetworkManager.NetworkRole == NetworkRole.Server)
+                //     return;
 
                 if (WorldManager.Instance?.WorldSun?.TargetLight == null)
                 {
