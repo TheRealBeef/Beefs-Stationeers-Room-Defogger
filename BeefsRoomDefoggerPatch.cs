@@ -34,6 +34,7 @@ namespace BeefsRoomDefogger
         private const int MaxTraversalDepth = 3; // How many room connections to check
         private const float CacheExpirySeconds = 600f; // 10min
         private const int MaxIterations = 50; //max loops for traverse
+        private const int GridsPerYield = 20; // grids processed per frame
 
         public enum RoomVentingState
         {
@@ -153,8 +154,6 @@ namespace BeefsRoomDefogger
                 {
                     roomAtmos = AtmosphericsController.World.GetAtmosphereLocal(grid);
                     if (roomAtmos != null) break;
-                    if (room.Grids.IndexOf(grid) % 10 == 0)
-                        yield return null;
                 }
 
                 RoomVentingState ventingState = RoomVentingState.Sealed;
@@ -205,7 +204,7 @@ namespace BeefsRoomDefogger
 
             int maxIterations = MaxIterations;
             int currentIteration = 0;
-            int iterationsSinceYield = 0;
+            int gridsSinceYield = 0;
             bool foundVenting = false;
 
             // I know it looks bad (double foreach in a while loop) but it's not so bad i promise i checked!
@@ -223,9 +222,7 @@ namespace BeefsRoomDefogger
                     var atmosphere = GetCachedAtmosphere(grid.Value);
                     if (atmosphere == null) continue;
 
-                    var neighborsToCheck = atmosphere.OpenNeighbors.ToList();
-
-                    foreach (var neighborGrid in neighborsToCheck)
+                    foreach (var neighborGrid in atmosphere.OpenNeighbors)
                     {
                         if (checkedNeighborGrids.Contains(neighborGrid))
                             continue;
@@ -273,12 +270,13 @@ namespace BeefsRoomDefogger
                             roomsToCheck.Enqueue((neighborRoom, currentDepth + 1));
                         }
                     }
-                }
-                iterationsSinceYield++;
-                if (iterationsSinceYield >= 2) // how many rooms per yield now
-                {
-                    iterationsSinceYield = 0;
-                    yield return null;
+
+                    gridsSinceYield++;
+                    if (gridsSinceYield >= GridsPerYield)
+                    {
+                        gridsSinceYield = 0;
+                        yield return null;
+                    }
                 }
             }
 
@@ -590,24 +588,8 @@ namespace BeefsRoomDefogger
 
             if (cachedState != null)
             {
-                if (!cachedState.Value.IsStale)
-                {
-                    // use cache
-                    ventingState = cachedState.Value.VentingState;
-                    similarityRatio = cachedState.Value.SimilarityRatio;
-                }
-                else
-                {
-                    // use cache but its stale
-                    ventingState = cachedState.Value.VentingState;
-                    similarityRatio = cachedState.Value.SimilarityRatio;
-                }
-            }
-            else
-            {
-                // no cache! sealed until otherwise proven
-                ventingState = BeefsRoomController.RoomVentingState.Sealed;
-                similarityRatio = 0.0f;
+                ventingState = cachedState.Value.VentingState;
+                similarityRatio = cachedState.Value.SimilarityRatio;
             }
 
             if (ventingState == BeefsRoomController.RoomVentingState.Venting)

@@ -35,6 +35,9 @@ See: [https://github.com/StationeersLaunchPad/StationeersLaunchPad](https://gith
 Configuration available through StationeersLaunchPad config or BepInEx config files.
 
 ## Changelog
+>### Version 1.1.6
+>- Performance improvements
+
 >### Version 1.1.5
 > - Revert the changes introduced in v1.1.0 for disabling in multiplayer
 
