@@ -22,6 +22,13 @@ namespace BeefsRoomDefogger
 {
     public static class BeefsRoomController
     {
+        private static bool? _isHeadless;
+        public static bool IsHeadlessMode()
+        {
+            _isHeadless ??= UnityEngine.SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null;
+            return _isHeadless.Value;
+        }
+
         private static bool _sealingCheckInProgress = false;
         private static double _worldTemperatureRange = 100.0;
 
@@ -149,8 +156,9 @@ namespace BeefsRoomDefogger
             foreach (var room in rooms)
             {
                 Atmosphere roomAtmos = null;
+                var gridsList = room.Grids.ToList();
 
-                foreach (var grid in room.Grids)
+                foreach (var grid in gridsList)
                 {
                     roomAtmos = AtmosphericsController.World.GetAtmosphereLocal(grid);
                     if (roomAtmos != null) break;
@@ -276,6 +284,7 @@ namespace BeefsRoomDefogger
                     {
                         gridsSinceYield = 0;
                         yield return null;
+                        if (currentRoom?.Grids == null) break;
                     }
                 }
             }
@@ -506,7 +515,7 @@ namespace BeefsRoomDefogger
 
         private void Start()
         {
-            if (!BeefsRoomDefoggerPlugin.EnableRoomDefogger.Value)
+            if (!BeefsRoomDefoggerPlugin.EnableRoomDefogger.Value || BeefsRoomController.IsHeadlessMode())
             {
                 BeefsRoomDefoggerPlugin.Log.LogInfo("Beefs Room Defogger is disabled");
                 enabled = false;
@@ -691,8 +700,9 @@ namespace BeefsRoomDefogger
             try
             {
                 float maxDistance = 0f;
+                var gridsList = room.Grids.ToList();
 
-                foreach (var grid in room.Grids)
+                foreach (var grid in gridsList)
                 {
                     var gridPos = grid.Value.ToVector3();
                     var distance = Vector3.Distance(playerPos, gridPos);
@@ -756,11 +766,11 @@ namespace BeefsRoomDefogger
         {
             try
             {
-                // if (NetworkManager.NetworkRole == NetworkRole.Server)
-                // {
-                //     BeefsRoomDefoggerPlugin.Log.LogInfo("Skipping defogger on server");
-                //     return;
-                // }
+                if (!BeefsRoomDefoggerPlugin.EnableRoomDefogger.Value || BeefsRoomController.IsHeadlessMode())
+                {
+                    BeefsRoomDefoggerPlugin.Log.LogInfo("Skipping defogger (disabled or headless server)");
+                    return;
+                }
 
                 var fogController = __instance.gameObject.GetComponent<FogControlPatcher>();
                 if (fogController == null)
@@ -794,8 +804,8 @@ namespace BeefsRoomDefogger
         {
             try
             {
-                // if (!BeefsRoomDefoggerPlugin.EnableRoomDefogger.Value || NetworkManager.NetworkRole == NetworkRole.Server)
-                //     return;
+                if (!BeefsRoomDefoggerPlugin.EnableRoomDefogger.Value || BeefsRoomController.IsHeadlessMode())
+                    return;
 
                 if (WorldManager.Instance?.WorldSun?.TargetLight == null)
                 {
