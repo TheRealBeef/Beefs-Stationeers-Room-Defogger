@@ -35,6 +35,9 @@ See: [https://github.com/StationeersLaunchPad/StationeersLaunchPad](https://gith
 Configuration available through StationeersLaunchPad config or BepInEx config files.
 
 ## Changelog
+>### Version 1.1.8
+>- Update to handle new gasses introduced in gasses update
+
 >### Version 1.1.7
 >- Fix enumerator error
 >- Add check to prevent running on dedicated server

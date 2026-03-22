@@ -364,11 +364,16 @@ namespace BeefsRoomDefogger
                 totalGasDiff += Math.Abs((globalAtmos.GasMixture.Oxygen.Quantity - roomAtmos.GasMixture.Oxygen.Quantity * volumeRatio).ToDouble());
                 totalGasDiff += Math.Abs((globalAtmos.GasMixture.Nitrogen.Quantity - roomAtmos.GasMixture.Nitrogen.Quantity * volumeRatio).ToDouble());
                 totalGasDiff += Math.Abs((globalAtmos.GasMixture.CarbonDioxide.Quantity - roomAtmos.GasMixture.CarbonDioxide.Quantity * volumeRatio).ToDouble());
-                totalGasDiff += Math.Abs((globalAtmos.GasMixture.Volatiles.Quantity - roomAtmos.GasMixture.Volatiles.Quantity * volumeRatio).ToDouble());
+                totalGasDiff += Math.Abs((globalAtmos.GasMixture.Methane.Quantity - roomAtmos.GasMixture.Methane.Quantity * volumeRatio).ToDouble());
                 totalGasDiff += Math.Abs((globalAtmos.GasMixture.Pollutant.Quantity - roomAtmos.GasMixture.Pollutant.Quantity * volumeRatio).ToDouble());
                 totalGasDiff += Math.Abs((globalAtmos.GasMixture.NitrousOxide.Quantity - roomAtmos.GasMixture.NitrousOxide.Quantity * volumeRatio).ToDouble());
                 totalGasDiff += Math.Abs((globalAtmos.GasMixture.Steam.Quantity - roomAtmos.GasMixture.Steam.Quantity * volumeRatio).ToDouble());
                 totalGasDiff += Math.Abs((globalAtmos.GasMixture.Hydrogen.Quantity - roomAtmos.GasMixture.Hydrogen.Quantity * volumeRatio).ToDouble());
+                totalGasDiff += Math.Abs((globalAtmos.GasMixture.Hydrazine.Quantity - roomAtmos.GasMixture.Hydrazine.Quantity * volumeRatio).ToDouble());
+                totalGasDiff += Math.Abs((globalAtmos.GasMixture.Helium.Quantity - roomAtmos.GasMixture.Helium.Quantity * volumeRatio).ToDouble());
+                totalGasDiff += Math.Abs((globalAtmos.GasMixture.Silanol.Quantity - roomAtmos.GasMixture.Silanol.Quantity * volumeRatio).ToDouble());
+                totalGasDiff += Math.Abs((globalAtmos.GasMixture.HydrochloricAcid.Quantity - roomAtmos.GasMixture.HydrochloricAcid.Quantity * volumeRatio).ToDouble());
+                totalGasDiff += Math.Abs((globalAtmos.GasMixture.Ozone.Quantity - roomAtmos.GasMixture.Ozone.Quantity * volumeRatio).ToDouble());
 
                 double maxGasDiff = maxPressureDiff;
                 double gasSimilarity = 1.0 - Math.Clamp(totalGasDiff / maxGasDiff, 0.0, 1.0);
