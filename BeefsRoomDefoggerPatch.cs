@@ -43,6 +43,19 @@ namespace BeefsRoomDefogger
         private const int MaxIterations = 50; //max loops for traverse
         private const int GridsPerYield = 20; // grids processed per frame
 
+        internal static List<T> CopyToList<T>(IEnumerable<T> source)
+        {
+            if (source == null) return new List<T>();
+            try
+            {
+                return source.ToList();
+            }
+            catch (InvalidOperationException)
+            {
+                return new List<T>();
+            }
+        }
+
         public enum RoomVentingState
         {
             Sealed,
@@ -121,7 +134,8 @@ namespace BeefsRoomDefogger
         public static void CleanupCache()
         {
             var staleRooms = new List<long>();
-            foreach (var kvp in RoomSealingCache)
+            var cacheCopy = CopyToList(RoomSealingCache);
+            foreach (var kvp in cacheCopy)
             {
                 if (kvp.Value.IsStale)
                 {
@@ -156,9 +170,10 @@ namespace BeefsRoomDefogger
             foreach (var room in rooms)
             {
                 Atmosphere roomAtmos = null;
-                var gridsList = room.Grids.ToList();
+                var roomGridsCopy = CopyToList(room.Grids);
+                if (roomGridsCopy.Count == 0) continue;
 
-                foreach (var grid in gridsList)
+                foreach (var grid in roomGridsCopy)
                 {
                     roomAtmos = AtmosphericsController.World.GetAtmosphereLocal(grid);
                     if (roomAtmos != null) break;
@@ -223,14 +238,16 @@ namespace BeefsRoomDefogger
                 currentIteration++;
 
                 var (currentRoom, currentDepth) = roomsToCheck.Dequeue();
-                var gridsToProcess = currentRoom.Grids.ToList();
+                var gridsToProcess = CopyToList(currentRoom.Grids);
+                if (gridsToProcess.Count == 0) continue;
 
                 foreach (var grid in gridsToProcess)
                 {
                     var atmosphere = GetCachedAtmosphere(grid.Value);
                     if (atmosphere == null) continue;
 
-                    foreach (var neighborGrid in atmosphere.OpenNeighbors)
+                    var neighborsCopy = CopyToList(atmosphere.OpenNeighbors);
+                    foreach (var neighborGrid in neighborsCopy)
                     {
                         if (checkedNeighborGrids.Contains(neighborGrid))
                             continue;
@@ -253,7 +270,8 @@ namespace BeefsRoomDefogger
 
                                 if (structureAtmos != null)
                                 {
-                                    foreach (var structureNeighbor in structureAtmos.OpenNeighbors)
+                                    var structNeighborsCopy = CopyToList(structureAtmos.OpenNeighbors);
+                                    foreach (var structureNeighbor in structNeighborsCopy)
                                     {
                                         var structNeighRoom = GetCachedRoom(structureNeighbor);
 
@@ -705,9 +723,10 @@ namespace BeefsRoomDefogger
             try
             {
                 float maxDistance = 0f;
-                var gridsList = room.Grids.ToList();
+                var roomGridsCopy = BeefsRoomController.CopyToList(room.Grids);
+                if (roomGridsCopy.Count == 0) return 5f;
 
-                foreach (var grid in gridsList)
+                foreach (var grid in roomGridsCopy)
                 {
                     var gridPos = grid.Value.ToVector3();
                     var distance = Vector3.Distance(playerPos, gridPos);
