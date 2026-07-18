@@ -56,6 +56,20 @@ namespace BeefsRoomDefogger
             }
         }
 
+        internal static List<Grid3> CopyToList(Grid3Buffer source)
+        {
+            if (source == null) return new List<Grid3>();
+            lock (source)
+            {
+                var list = new List<Grid3>(source.Count);
+                for (int i = 0; i < source.Count; i++)
+                {
+                    list.Add(source[i]);
+                }
+                return list;
+            }
+        }
+
         public enum RoomVentingState
         {
             Sealed,
@@ -350,7 +364,7 @@ namespace BeefsRoomDefogger
         {
             if (!TraversalStructureCache.TryGetValue(grid, out var structure))
             {
-                structure = GridController.World?.GetStructure(grid);
+                structure = GridController.World?.Get<Structure>(new WorldGrid(grid));
                 TraversalStructureCache[grid] = structure;
             }
             return structure;

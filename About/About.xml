@@ -31,6 +31,10 @@
     </Description>
 
     <ChangeLog>
+        Version 1.2.0
+        - Update for Sanitation Update
+        - Thanks to aproposmath and wnsdljun for your help with the fixes!
+
         Version 1.1.9
         - Fix enumerator error take 2
 
