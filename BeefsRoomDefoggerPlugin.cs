@@ -126,7 +126,7 @@ namespace BeefsRoomDefogger
                     return;
                 }
                 _currentPopup = _popupQueue.Dequeue();
-                StartShowingPopup(_currentPopup);
+                StartShowingPopup();
             }
 
             if (_showPopup && !IsInGameWorld())
@@ -142,16 +142,26 @@ namespace BeefsRoomDefogger
             }
         }
 
+        private bool _cachedIsInGameWorld;
+        private int _cachedSceneHandle = int.MinValue;
+
         public bool IsInGameWorld()
         {
-            string sceneName = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
-            string lowerSceneName = sceneName.ToLower();
+            Scene active = SceneManager.GetActiveScene();
+            if (active.handle == _cachedSceneHandle)
+            {
+                return _cachedIsInGameWorld;
+            }
+
+            string lowerSceneName = (active.name ?? string.Empty).ToLowerInvariant();
             bool isMenu = lowerSceneName.Contains("menu") || lowerSceneName.Contains("splash");
-            bool isGameWorld = !isMenu;
-            return isGameWorld;
+
+            _cachedSceneHandle = active.handle;
+            _cachedIsInGameWorld = !isMenu;
+            return _cachedIsInGameWorld;
         }
 
-        private void StartShowingPopup(UpdatePopupItem item)
+        private void StartShowingPopup()
         {
             _popupRectInitialized = false;
             _scrollPos = Vector2.zero;
@@ -182,9 +192,11 @@ namespace BeefsRoomDefogger
 
         private void OnGUI()
         {
-            Color oldColor = GUI.color;
             if (!_showPopup || _currentPopup == null) return;
             if (!IsInGameWorld()) return;
+
+            Color oldColor = GUI.color;
+            Color oldBackgroundColor = GUI.backgroundColor;
 
             if (!_popupRectInitialized)
                 InitializePopupRect();
@@ -212,6 +224,7 @@ namespace BeefsRoomDefogger
 
             GUI.matrix = oldMatrix;
             GUI.color = oldColor;
+            GUI.backgroundColor = oldBackgroundColor;
         }
 
         private void DrawPopupWindow(int id)

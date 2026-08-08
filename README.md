@@ -29,6 +29,10 @@ See: [https://github.com/StationeersLaunchPad/StationeersLaunchPad](https://gith
 Configuration available through StationeersLaunchPad config or BepInEx config files.
 
 ## Changelog
+>### Version v1.2.1
+>- Fix missingmethodexception
+>- Fixed the defogger not restarting or getting stuck after quitting to the menu
+
 >### Version 1.2.0
 > - Update for Sanitation Update
 > - Thanks to aproposmath for your help with the fixes!

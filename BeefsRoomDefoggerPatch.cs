@@ -42,6 +42,7 @@ namespace BeefsRoomDefogger
         private const float CacheExpirySeconds = 600f; // 10min
         private const int MaxIterations = 50; //max loops for traverse
         private const int GridsPerYield = 20; // grids processed per frame
+        private const double Epsilon = 1e-6; // prevent divide-by-zero
 
         internal static List<T> CopyToList<T>(IEnumerable<T> source)
         {
@@ -100,6 +101,11 @@ namespace BeefsRoomDefogger
         {
             _worldTemperatureRange = WorldTempRange();
             BeefsRoomDefoggerPlugin.Log.LogInfo($"BeefsRoomController initialized with temp range: {_worldTemperatureRange:F1}K");
+        }
+
+        private static bool WorldReady()
+        {
+            return AtmosphericsController.World != null && RoomController.World != null;
         }
 
         public static Room GetRoom()
@@ -181,35 +187,45 @@ namespace BeefsRoomDefogger
             if (_sealingCheckInProgress) yield break;
             _sealingCheckInProgress = true;
 
-            foreach (var room in rooms)
+            try
             {
-                Atmosphere roomAtmos = null;
-                var roomGridsCopy = CopyToList(room.Grids);
-                if (roomGridsCopy.Count == 0) continue;
-
-                foreach (var grid in roomGridsCopy)
+                foreach (var room in rooms)
                 {
-                    roomAtmos = AtmosphericsController.World.GetAtmosphereLocal(grid);
-                    if (roomAtmos != null) break;
+                    if (!WorldReady()) yield break;
+                    if (room == null) continue;
+
+                    Atmosphere roomAtmos = null;
+                    var roomGridsCopy = CopyToList(room.Grids);
+                    if (roomGridsCopy.Count == 0) continue;
+
+                    foreach (var grid in roomGridsCopy)
+                    {
+                        roomAtmos = AtmosphericsController.World.GetAtmosphereLocal(grid, true);
+                        if (roomAtmos != null) break;
+                    }
+
+                    RoomVentingState ventingState = RoomVentingState.Sealed;
+                    float similarityRatio = 0.0f;
+                    HashSet<int3> ventingGrids = new HashSet<int3>();
+
+                    if (roomAtmos != null)
+                    {
+                        yield return IsAtmosphereGroupVentingCoroutine(roomAtmos, (state, similarity, grids) => {
+                            ventingState = state;
+                            similarityRatio = similarity;
+                            ventingGrids = grids;
+                        });
+                    }
+
+                    if (!WorldReady()) yield break;
+
+                    RoomSealingCache[room.RoomId] = new RoomSealingInfo(ventingState, similarityRatio, Time.time, 1, ventingGrids);
                 }
-
-                RoomVentingState ventingState = RoomVentingState.Sealed;
-                float similarityRatio = 0.0f;
-                HashSet<int3> ventingGrids = new HashSet<int3>();
-
-                if (roomAtmos != null)
-                {
-                    yield return IsAtmosphereGroupVentingCoroutine(roomAtmos, (state, similarity, grids) => {
-                        ventingState = state;
-                        similarityRatio = similarity;
-                        ventingGrids = grids;
-                    });
-                }
-
-                RoomSealingCache[room.RoomId] = new RoomSealingInfo(ventingState, similarityRatio, Time.time, 1, ventingGrids);
             }
-
-            _sealingCheckInProgress = false;
+            finally
+            {
+                _sealingCheckInProgress = false;
+            }
         }
 
         private static IEnumerator IsAtmosphereGroupVentingCoroutine(
@@ -218,7 +234,7 @@ namespace BeefsRoomDefogger
         {
             // ~0.09ms but is coroutine so is fine
             // using var _ = ModProfiler.Profile();
-            if (startAtmos?.Room == null)
+            if (startAtmos?.Room == null || !WorldReady())
             {
                 callback(RoomVentingState.Venting, 1.0f, new HashSet<int3>());
                 yield break;
@@ -250,6 +266,7 @@ namespace BeefsRoomDefogger
                 // ~0.01ms avg to 0.03 worst case
                 // using var _2 = ModProfiler.ProfileSubsection("Check Neighbors");
                 currentIteration++;
+                if (!WorldReady()) yield break;
 
                 var (currentRoom, currentDepth) = roomsToCheck.Dequeue();
                 var gridsToProcess = CopyToList(currentRoom.Grids);
@@ -344,7 +361,10 @@ namespace BeefsRoomDefogger
         {
             if (!TraversalAtmosphereCache.TryGetValue(grid, out var atmosphere))
             {
-                atmosphere = AtmosphericsController.World.GetAtmosphereLocal(new WorldGrid(grid));
+                var world = AtmosphericsController.World;
+                if (world == null) return null;
+
+                atmosphere = world.GetAtmosphereLocal(new WorldGrid(grid), true);
                 TraversalAtmosphereCache[grid] = atmosphere;
             }
             return atmosphere;
@@ -354,7 +374,9 @@ namespace BeefsRoomDefogger
         {
             if (!TraversalRoomCache.TryGetValue(grid, out var room))
             {
-                room = RoomController.World.GetRoom(grid);
+                var world = RoomController.World;
+                if (world == null) return null;
+                room = world.GetRoom(new WorldGrid(grid));
                 TraversalRoomCache[grid] = room;
             }
             return room;
@@ -385,12 +407,16 @@ namespace BeefsRoomDefogger
                 globalPressureRatio = Math.Clamp(globalPressureRatio, 0.04, 1.0);
                 double pressureDiff = Math.Abs((globalAtmos.PressureGasses - roomAtmos.PressureGasses).ToDouble());
                 double maxPressureDiff = globalAtmos.PressureGasses.ToDouble() * globalPressureRatio;
-                double pressureSimilarity = 1.0 - Math.Clamp(pressureDiff / maxPressureDiff, 0.0, 1.0);
+                double pressureSimilarity = maxPressureDiff < Epsilon ? (pressureDiff < Epsilon ? 1.0 : 0.0) : 1.0 - Math.Clamp(pressureDiff / maxPressureDiff, 0.0, 1.0);
 
                 double tempDiff = Math.Abs(globalAtmos.Temperature.ToDouble() - roomAtmos.Temperature.ToDouble());
                 double temperatureSimilarity = 1.0 - Math.Clamp(tempDiff / _worldTemperatureRange, 0.0, 1.0);
 
                 double volumeRatio = (globalAtmos.Volume / roomAtmos.Volume).ToDouble();
+                if (double.IsNaN(volumeRatio) || double.IsInfinity(volumeRatio))
+                {
+                    volumeRatio = 1.0;
+                }
                 double totalGasDiff = 0.0;
 
                 totalGasDiff += Math.Abs((globalAtmos.GasMixture.Oxygen.Quantity - roomAtmos.GasMixture.Oxygen.Quantity * volumeRatio).ToDouble());
@@ -408,10 +434,15 @@ namespace BeefsRoomDefogger
                 totalGasDiff += Math.Abs((globalAtmos.GasMixture.Ozone.Quantity - roomAtmos.GasMixture.Ozone.Quantity * volumeRatio).ToDouble());
 
                 double maxGasDiff = maxPressureDiff;
-                double gasSimilarity = 1.0 - Math.Clamp(totalGasDiff / maxGasDiff, 0.0, 1.0);
+                double gasSimilarity = maxGasDiff < Epsilon ? (totalGasDiff < Epsilon ? 1.0 : 0.0) : 1.0 - Math.Clamp(totalGasDiff / maxGasDiff, 0.0, 1.0);
 
                 // I dunno if these weights are good, but we'll see after some testing. worst case make per-world settings?
                 double overallSimilarity = (pressureSimilarity * 0.2 + temperatureSimilarity * 0.35 + gasSimilarity * 0.45);
+
+                if (double.IsNaN(overallSimilarity))
+                {
+                    return 0f;
+                }
 
                 return (float)Math.Clamp(overallSimilarity, 0.0, 1.0);
             }
@@ -562,6 +593,7 @@ namespace BeefsRoomDefogger
             _originalFogEnd = RenderSettings.fogEndDistance;
             _initialized = true;
             BeefsRoomDefoggerPlugin.Log.LogInfo($"Beefs Room Defogger loaded");
+            CancelInvoke(nameof(CleanupCache));
             InvokeRepeating(nameof(CleanupCache), 30f, 30f);
         }
 
@@ -571,6 +603,10 @@ namespace BeefsRoomDefogger
 
             if (!BeefsRoomDefoggerPlugin.EnableRoomDefogger.Value)
             {
+                if (_initialized)
+                {
+                    ResetToVanilla("Defogger disabled in config");
+                }
                 return;
             }
 
@@ -579,18 +615,7 @@ namespace BeefsRoomDefogger
             {
                 if (_initialized)
                 {
-                    // back at main menu - reset
-                    RenderSettings.fogStartDistance = _originalFogStart;
-                    RenderSettings.fogEndDistance = _originalFogEnd;
-                    _initialized = false;
-                    _isInSealedRoom = false;
-                    _lastPlayerRoom = null;
-                    _currentFogDistance = 0f;
-                    _lastCalculatedRoomDistance = -1f;
-                    _lastPlayerInSealedRoom = false;
-                    _lastCalculationTime = 0f;
-                    BeefsRoomController.ClearCache();
-                    BeefsRoomDefoggerPlugin.Log.LogInfo("Reset");
+                    ResetToVanilla("Returned to main menu");
                 }
                 return;
             }
@@ -602,6 +627,7 @@ namespace BeefsRoomDefogger
                 BeefsRoomController.Initialize();
                 _initialized = true;
                 BeefsRoomDefoggerPlugin.Log.LogInfo($"Beefs Room Defogger initialized");
+                CancelInvoke(nameof(CleanupCache));
                 InvokeRepeating(nameof(CleanupCache), 30f, 30f);
             }
 
@@ -669,9 +695,25 @@ namespace BeefsRoomDefogger
         {
             if (_initialized)
             {
-                RenderSettings.fogStartDistance = _originalFogStart;
-                RenderSettings.fogEndDistance = _originalFogEnd;
+                ResetToVanilla("Component destroyed");
             }
+        }
+
+        private void ResetToVanilla(string reason)
+        {
+            RenderSettings.fogStartDistance = _originalFogStart;
+            RenderSettings.fogEndDistance = _originalFogEnd;
+            _initialized = false;
+            _isInSealedRoom = false;
+            _lastPlayerRoom = null;
+            _currentFogDistance = 0f;
+            _lastCalculatedRoomDistance = -1f;
+            _lastPlayerInSealedRoom = false;
+            _lastCalculationTime = 0f;
+            _lastFogReductionMultiplier = 0f;
+            CancelInvoke(nameof(CleanupCache));
+            BeefsRoomController.ClearCache();
+            BeefsRoomDefoggerPlugin.Log.LogInfo($"Reset: {reason}");
         }
 
         private float CalculateFogMultiplier(float similarityRatio)
@@ -706,11 +748,18 @@ namespace BeefsRoomDefogger
                 var playerPos = localHuman.Transform.position;
                 var fogDistance = CalculateFogDistance(room, playerPos);
                 var buffer = BeefsRoomDefoggerPlugin.IndoorFogBuffer.Value;
-                _lastCalculatedRoomDistance = (fogDistance + buffer) * fogReductionMultiplier;
+                var newFogStart = (fogDistance + buffer) * fogReductionMultiplier;
+
+                if (float.IsNaN(newFogStart) || float.IsInfinity(newFogStart))
+                {
+                    BeefsRoomDefoggerPlugin.Log.LogWarning("Computed fog distance was not finite - skipping update");
+                    return;
+                }
+
+                _lastCalculatedRoomDistance = newFogStart;
                 _lastPlayerInSealedRoom = fogReductionMultiplier > 0f;
                 _lastCalculationTime = Time.time;
 
-                var newFogStart = _lastCalculatedRoomDistance;
                 var newFogEnd = newFogStart + 10f;
 
                 if (_currentFogDistance == 0f || Mathf.Abs(newFogStart - _currentFogDistance) > 1f)
@@ -842,8 +891,20 @@ namespace BeefsRoomDefogger
         {
             try
             {
-                if (!BeefsRoomDefoggerPlugin.EnableRoomDefogger.Value || BeefsRoomController.IsHeadlessMode())
+                if (BeefsRoomController.IsHeadlessMode())
                     return;
+
+                if (!BeefsRoomDefoggerPlugin.EnableRoomDefogger.Value)
+                {
+                    if (_isInitialized && _originalWorldNearScatterPush != float.MinValue)
+                    {
+                        __instance.worldNearScatterPush = _originalWorldNearScatterPush;
+                        __instance.heightNearScatterPush = _originalHeightNearScatterPush;
+                        _isInitialized = false;
+                        BeefsRoomDefoggerPlugin.Log.LogInfo("Reset atmospheric scattering (defogger disabled)");
+                    }
+                    return;
+                }
 
                 if (WorldManager.Instance?.WorldSun?.TargetLight == null)
                 {
